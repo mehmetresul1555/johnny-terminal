@@ -1,0 +1,40 @@
+# Johnny Terminal - izleme listesi ve parametreler
+# Bu dosya kod degil, sadece ayar dosyasidir. Degerleri istediginiz gibi
+# degistirebilirsiniz.
+
+# Takip edilen BIST hisseleri (sidebar'daki "sadece watchlist" filtresi icin)
+watchlist:
+  - THYAO
+  - SASA
+  - EREGL
+  - ASELS
+  - KCHOL
+  - TUPRS
+  - FROTO
+  - BIMAS
+  - SISE
+  - PGSUS
+  - KRDMD
+  - YKBNK
+
+# Johnny Score esikleri
+thresholds:
+  al: 85      # bu puan ve uzeri -> AL
+  izle: 70    # bu puan ve 'al' esigi arasi -> IZLE, altinda -> UZAK DUR
+
+# Gunluk trade risk parametreleri
+risk:
+  stop_max_pct: 2.0      # stop mesafesi en fazla %2
+  hedef1_min_pct: 1.5    # hedef 1 en az %1.5
+  hedef2_min_pct: 3.0    # hedef 2 en az %3
+  giris_bant_pct: 0.3    # alim araligi genisligi (fiyatin +-%'si)
+
+# Varsayilan veri dosyasi (app.py "Ornek veri" secildiginde bunu okur)
+data:
+  default_file: "data/sample_data.csv"
+
+# Ileride eklenecek Fintables entegrasyonu icin yer tutucu.
+# MVP asamasinda kullanilmiyor; sadece arayuzde bilgi amacli gosteriliyor.
+fintables:
+  enabled: false
+  note: "Fintables Pro tablolarindan manuel/yari otomatik veri aktarimi ve ileride browser automation ile otomatik cekim planlaniyor."
