@@ -4,18 +4,29 @@ Technical Engine
 Johnny Score'un "Teknik" alt skorunu (maksimum 30 puan) ham teknik
 göstergelerden hesaplar.
 
-Girdi kolonları (CSV'den gelir):
+Girdi kolonları (CSV'den/Fintables'tan gelir):
     rsi, macd_signal, ema20, ema50, ema200, adx
 
+v1.0 FINAL: bu kolonların hepsi artık OPSİYONELDİR. Fintables tarayıcı
+otomasyonu bir hissenin Teknik Analiz sayfasından bu göstergeleri
+okuyamazsa (örn. gösterge bir canvas/grafik üzerinde render ediliyorsa
+ve DOM'da metin olarak bulunamıyorsa) ilgili alan(lar) None/NaN olarak
+gelir. Aşağıdaki her `_x_score` fonksiyonu zaten eksik veri için makul
+bir varsayılanla nötr/ortalama bir puan üretir (asla çökmez); hangi
+göstergelerin eksik olduğu (kullanıcıya "neden bu puan" açıklamasında
+göstermek için) `scoring/johnny_score.py` -> `_eksik_teknik_gostergeler`
+tarafından ayrıca tespit edilir.
+
 Puan dağılımı (toplam 30):
-    - RSI              : 10 puan  (50-70 bandı ideal)
-    - EMA hizalanması  : 10 puan  (ema20 > ema50 > ema200 => tam pozitif)
-    - ADX              : 5 puan   (güçlü trend => yüksek puan)
-    - MACD             : 5 puan   (pozitif => yüksek puan)
+    - RSI              : 10 puan  (50-70 bandı ideal; eksikse RSI=50 varsayılır)
+    - EMA hizalanması  : 10 puan  (ema20 > ema50 > ema200 => tam pozitif; eksikse 0 varsayılır)
+    - ADX              : 5 puan   (güçlü trend => yüksek puan; eksikse 0 varsayılır)
+    - MACD             : 5 puan   (pozitif => yüksek puan; eksikse nötr/0 varsayılır)
 """
 
 MAX_SCORE = 30
-REQUIRED_COLUMNS = ["rsi", "macd_signal", "ema20", "ema50", "ema200", "adx"]
+# v1.0 FINAL: hiçbiri artık zorunlu değil (bkz. modül docstring'i).
+REQUIRED_COLUMNS = []
 
 
 def _safe_float(value, default=0.0):

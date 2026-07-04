@@ -70,45 +70,55 @@ fintables:
     table: "table.grid"
     row: "tr"
 
-  # v1.0 "final akış": Radar'daki ~640 hisse arasından basit bir ön
+  # v1.0 FINAL "final akış": Radar'daki ~640 hisse arasından basit bir ön
   # elemeyle (bkz. scoring/pre_screen.py) ilk top_n aday seçilir; SADECE
   # bunların detay/Teknik Analiz sayfasına girilir (640 hissenin tamamına
   # DEĞİL).
   pre_screen:
-    top_n: 10
+    top_n: 20
 
-  # v1.0: Ön elemeden geçen adayların Teknik Analiz sayfası ayarları.
-  # UYARI: url_template ve selectors HENÜZ gerçek bir Fintables hisse
-  # detay sayfasında DOĞRULANMADI (Radar tablosu için yapılan DOM
-  # taramasının bir benzeri bu sayfa için de gerekiyor - bkz.
-  # integrations/fintables_browser.py modül docstring'i). Bir seçici
-  # boş/yanlış olursa ilgili alan boş (None) döner, sistem çökmez;
-  # ama o hissenin ilgili göstergesi de eksik kalır.
+  # v1.0 FINAL: Ön elemeden geçen adayların detay/işlem ekranı sayfası
+  # ayarları. url_template ve legend_item_selector,
+  # integrations/explore_fintables_detail_dom.py ile AKBNK üzerinde
+  # yapılan gerçek bir DOM taramasıyla DOĞRULANDI (bkz.
+  # integrations/fintables_browser.py modül docstring'i).
   detay:
-    # {ticker} yerine hisse kodu (örn. SASA) konur. Fintables'ın genel
-    # şirket sayfası kalıbına (fintables.com/sirketler/{TICKER}) göre
-    # TAHMİN edilmiştir - gerçek Teknik Analiz alt sayfası/sekmesi
-    # DOĞRULANMALIDIR.
-    url_template: "https://fintables.com/sirketler/{ticker}/teknik-analiz"
+    # {ticker} yerine hisse kodu (örn. SASA) konur. DOĞRULANDI: bu sayfa,
+    # RSI/MACD/EMA/ADX/ATR göstergelerini içeren TradingView grafiğini
+    # gösteriyor.
+    url_template: "https://fintables.com/islem-ekrani?code={ticker}"
 
-    # Her hissenin sayfası açıldıktan sonra bu CSS seçicilerle ilgili
-    # değer okunur (inner text olarak). Şimdilik BOŞ - gerçek sayfa
-    # taranıp doldurulmalı.
-    selectors:
-      rsi: ""
-      macd_signal: ""
-      ema20: ""
-      ema50: ""
-      ema200: ""
-      adx: ""
-      atr_pct: ""
+    # DOĞRULANDI: grafikteki her gösterge (RSI/MACD/EMA/ADX/ATR/Hacim...)
+    # bu seçiciyle bulunan bir "legend" (üst bilgi) metin kutusu olarak
+    # durur. Grafiğin/çizgilerin kendisi <canvas>'tır ve okunamaz, ama bu
+    # metin kutuları gerçek DOM'dur - integrations/fintables_browser.py
+    # bunları ayrıştırıp (bkz. _legend_metnini_ayikla) rsi/macd_signal/
+    # ema20/ema50/ema200/adx/atr alanlarına atar.
+    legend_item_selector: "[data-name='legend-source-item']"
+
+    # Grafiğin (iframe + legend elementleri) yüklenmesi için azami
+    # bekleme (ms).
+    grafik_bekleme_ms: 10000
+
+    # ÖNEMLİ: EMA20/EMA50/EMA200'ün üç AYRI gösterge olarak grafiğe
+    # EKLENMİŞ olması gerekir (RSI/MACD/ADX/ATR ile birlikte). Johnny
+    # bunları otomatik EKLEMEYE ÇALIŞMAZ (bkz. ensure_indicators_visible
+    # docstring'i - "gösterge ekle" arama/dialog akışı henüz DOM
+    # taramasıyla doğrulanmadı, doğrulanmamış tıklamalar riskli olur).
+    # Bunun yerine: Fintables/TradingView hesabınızda RSI, MACD,
+    # EMA(20), EMA(50), EMA(200), ADX, ATR göstergelerini BİR KEZ elle
+    # ekleyin ve mümkünse "varsayılan şablon" olarak kaydedin - bu genelde
+    # hesap/oturum boyunca korunur ve her hissede otomatik görünür.
+    # Eksik kalan göstergeler nötr varsayımla hesaplanır, sistem çökmez;
+    # sadece o gösterge "Johnny neden bu puanı verdi?" bölümünde
+    # "eksik" olarak belirtilir.
 
     # Her hisse arasında kısa, rastgele bir bekleme (saniye) - "yavaş ve
     # güvenli" çalışma isteği için.
     bekleme_min_sn: 2.0
     bekleme_max_sn: 4.0
 
-    # Detay sayfası açma/element bekleme zaman aşımı (ms)
+    # Radar sayfası açma/element bekleme zaman aşımı (ms)
     timeout_ms: 30000
 
   note: "Otomasyonu etkinleştirmeden önce Fintables'ın güncel kullanım şartlarını kontrol edin. Johnny yalnızca kullanıcının kendi Pro hesabıyla zaten görebildiği sayfaları, manuel tetikleme ile (arka planda otomatik/periyodik tarama yapmadan) okur. Şimdilik sadece sayfa ilk açıldığında görünen 'Getiri' sekmesi okunur; filtre/sekme değiştirme henüz yapılmıyor."

@@ -4,17 +4,24 @@ Momentum Engine
 Johnny Score'un "Momentum" alt skorunu (maksimum 20 puan) ham verilerden
 hesaplar.
 
-Girdi kolonları (CSV'den gelir):
+Girdi kolonları (CSV'den/Fintables'tan gelir):
     fiyat, ema20, atr_pct, volume_ratio
+
+v1.0 FINAL: `ema20` ve `atr_pct` artık OPSİYONELDİR (Fintables Teknik
+Analiz sayfasından okunamayabilir - bkz. technical_engine.py modül
+docstring'i). Eksikse bu fonksiyonlar zaten nötr bir varsayılanla
+çalışır (asla çökmez); sadece `fiyat` her zaman gerekli kalır (Radar'dan
+her zaman gelir).
 
 Puan dağılımı (toplam 20):
     - Volume Ratio        : 8 puan  (ortalama hacmin üzerinde => yüksek puan)
-    - ATR                 : 6 puan  (günlük trade için ideal volatilite bandı)
-    - Fiyat momentumu     : 6 puan  (fiyatın EMA20'nin üzerinde oluşu, proxy)
+    - ATR                 : 6 puan  (günlük trade için ideal volatilite bandı; eksikse %1.5 varsayılır)
+    - Fiyat momentumu     : 6 puan  (fiyatın EMA20'nin üzerinde oluşu, proxy; ema20 eksikse 0 puan)
 """
 
 MAX_SCORE = 20
-REQUIRED_COLUMNS = ["fiyat", "ema20", "atr_pct", "volume_ratio"]
+# v1.0 FINAL: ema20/atr_pct artık zorunlu değil (bkz. modül docstring'i).
+REQUIRED_COLUMNS = ["fiyat", "volume_ratio"]
 
 
 def _safe_float(value, default=0.0):

@@ -36,13 +36,20 @@ STANDARD_COLUMNS = [
     "yeni_is_iliskisi",
 ]
 
-# Zorunlu olmayan (opsiyonel) standart kolonlar. haber_puani/kurumsal_puani/
-# piyasa_rejimi Fintables'tan hiçbir zaman gelmez (Johnny'nin kendi öznel
-# puanlarıdır); eksik olduklarında scoring/johnny_score.py nötr bir
-# varsayılan (5/10) kullanır.
+# Zorunlu olmayan (opsiyonel) standart kolonlar.
+# - haber_puani/kurumsal_puani/piyasa_rejimi Fintables'tan hiçbir zaman
+#   gelmez (Johnny'nin kendi öznel puanlarıdır); eksik olduklarında
+#   scoring/johnny_score.py nötr bir varsayılan (5/10) kullanır.
+# - rsi/macd_signal/ema20/ema50/ema200/adx/atr_pct (v1.0 FINAL):
+#   Fintables tarayıcı otomasyonu bunları hisse detay/Teknik Analiz
+#   sayfasından okumaya çalışır, ama gösterge bir canvas/grafik üzerinde
+#   render ediliyorsa DOM'dan okunamayabilir. Eksik olduklarında
+#   scoring motorları nötr/varsayılan değerlerle çalışır, sistem çökmez;
+#   "Johnny neden bu puanı verdi?" bölümünde açıkça belirtilir.
 OPTIONAL_STANDARD_COLUMNS = [
     "yeni_is_iliskisi", "gerekce_notu",
     "haber_puani", "kurumsal_puani", "piyasa_rejimi",
+    "rsi", "macd_signal", "ema20", "ema50", "ema200", "adx", "atr_pct",
 ]
 
 # Her Johnny kolonu için bilinen Türkçe/İngilizce takma adlar (normalize

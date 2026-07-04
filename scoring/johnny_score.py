@@ -96,6 +96,53 @@ DEFAULT_HABER_PUANI = 5.0
 DEFAULT_KURUMSAL_PUANI = 5.0
 DEFAULT_PIYASA_REJIMI = 5.0
 
+# v1.0 FINAL: Fintables tarayıcı otomasyonu bir hissenin Teknik Analiz
+# sayfasından bu göstergeleri okuyamayabilir (örn. gösterge bir
+# canvas/grafik üzerinde render ediliyorsa DOM'da metin olarak
+# bulunamaz). technical_engine/momentum_engine bu durumda zaten nötr
+# varsayılanlarla çalışır (bkz. ilgili modüller); burada sadece HANGİ
+# göstergelerin eksik olduğu tespit edilip kullanıcıya "neden bu puan"
+# açıklamasında şeffafça gösterilir.
+TEKNIK_GOSTERGE_ETIKETLERI = {
+    "rsi": "RSI",
+    "macd_signal": "MACD",
+    "ema20": "EMA20",
+    "ema50": "EMA50",
+    "ema200": "EMA200",
+    "adx": "ADX",
+    "atr_pct": "ATR",
+}
+
+
+def _deger_eksik_mi(deger):
+    """Bir hücrenin skorlama açısından 'eksik' sayılıp sayılmadığını
+    kontrol eder: None, boş string ya da NaN ise eksiktir."""
+    if deger is None:
+        return True
+    try:
+        f = float(deger)
+    except (TypeError, ValueError):
+        # Sayıya çevrilemeyen boş olmayan bir string (örn. "") de eksik
+        # kabul edilir; gerçek bir sayısal değilse güvenilir değildir.
+        return str(deger).strip() == ""
+    return f != f  # NaN kontrolü
+
+
+def _eksik_teknik_gostergeler(row):
+    """Bir hisse satırında RSI/MACD/EMA20/EMA50/EMA200/ADX/ATR
+    göstergelerinden hangilerinin eksik (None/NaN/boş) olduğunu
+    tespit eder.
+
+    Returns:
+        list[str]: eksik göstergelerin kullanıcı dostu etiketleri
+        (örn. ["RSI", "MACD"]). Hiçbiri eksik değilse boş liste.
+    """
+    eksikler = []
+    for kolon, etiket in TEKNIK_GOSTERGE_ETIKETLERI.items():
+        if _deger_eksik_mi(row.get(kolon)):
+            eksikler.append(etiket)
+    return eksikler
+
 # Skorlama için zorunlu ham kolonlar (hepsi CSV'de bulunmalı). Not:
 # haber_puani/kurumsal_puani/piyasa_rejimi burada YOK - bkz. OPTIONAL_COLUMNS.
 REQUIRED_COLUMNS = (
@@ -187,6 +234,8 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
         row, "piyasa_rejimi", DEFAULT_PIYASA_REJIMI, SUB_SCORE_MAX["piyasa_rejimi_skor"]
     )
 
+    eksik_teknik_gostergeler = _eksik_teknik_gostergeler(row)
+
     clipped = {
         "teknik_skor": teknik_skor,
         "momentum_skor": momentum_skor,
@@ -221,6 +270,7 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
         "base_score": base_score,
         "rule_bonus": rule_bonus,
         "fired_rules": fired_rules,
+        "eksik_teknik_gostergeler": eksik_teknik_gostergeler,
     }
 
 
@@ -321,14 +371,25 @@ def generate_reason_bullets(score_result):
     base_score = score_result["base_score"]
     rule_bonus = score_result["rule_bonus"]
 
+    eksik_teknik_gostergeler = score_result.get("eksik_teknik_gostergeler", [])
+
     bullets = []
     for key in ["teknik_skor", "momentum_skor", "bilanco_skor", "haber_skor", "kurumsal_skor", "piyasa_rejimi_skor"]:
         etiket = f"{LABELS[key]}: {clipped[key]:.0f}/{SUB_SCORE_MAX[key]} puan"
         if varsayilan_kullanildi.get(key):
             etiket += " (veri yok, nötr varsayılan kullanıldı)"
+        elif key in ("teknik_skor", "momentum_skor") and eksik_teknik_gostergeler:
+            etiket += " (bazı göstergeler eksik, kısmen varsayılan kullanıldı)"
         else:
             etiket += " (taban analiz)"
         bullets.append(etiket)
+
+    if eksik_teknik_gostergeler:
+        bullets.append(
+            "Teknik göstergelerden eksik olanlar: "
+            f"{', '.join(eksik_teknik_gostergeler)} (Fintables Teknik Analiz "
+            "sayfasından okunamadı; nötr/varsayılan değerlerle hesaplandı)"
+        )
 
     bullets.append(f"Taban puan (damping uygulanmış): {base_score:.1f} puan")
 
