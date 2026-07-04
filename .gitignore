@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .streamlit/
 outputs/*.csv
+
+# Fintables oturum bilgisi (cerezler/localStorage) - ASLA commit'lenmez
+integrations/.sessions/

@@ -1,6 +1,6 @@
 # Johnny Terminal
 
-BIST günlük trade karar destek sistemi (v0.4).
+BIST günlük trade karar destek sistemi (v0.5).
 
 Bu araç **otomatik emir göndermez**. Her sabah BIST hisseleri arasından en iyi
 3 trade adayını bulup her biri için alım aralığı, stop, hedef 1, hedef 2 ve
@@ -18,6 +18,12 @@ aittir.
    ```
    pip3 install -r requirements.txt
    ```
+4. Fintables tarayıcı otomasyonunu kullanacaksanız (opsiyonel — manuel
+   CSV/Excel yükleme veya örnek veri olmadan da uygulama çalışır),
+   Playwright'ın tarayıcı motorunu da indirin:
+   ```
+   playwright install chromium
+   ```
 
 ## Çalıştırma
 
@@ -33,10 +39,58 @@ durdurmaz).
 Masaüstünden çift tıklayarak açmak isterseniz, proje klasöründeki
 `Johnny Terminal.command` dosyasını kullanabilirsiniz.
 
+## Fintables Kurulumu (tarayıcı otomasyonu)
+
+v0.5 ile Johnny Terminal'in ana veri kaynağı **Fintables Pro tarayıcı
+otomasyonu**dur (`integrations/fintables_browser.py`). Fintables'ın
+resmi bir API'si olmadığı için Playwright ile kullanıcının KENDİ
+oturumu üzerinden ilgili sayfa açılıp okunur.
+
+**Nasıl çalışır:**
+
+1. Sol menüden "Fintables (Tarayıcı Otomasyonu)" seçili (varsayılan).
+2. **"🌐 Tarayıcıyı Aç ve Giriş Yap"** butonuna basın — gerçek bir
+   tarayıcı penceresi açılır, Fintables giriş sayfasına gider.
+3. Bu pencerede **kendi kullanıcı adı/şifrenizle ELLE** giriş yapın.
+   Johnny bu forma hiçbir şekilde dokunmaz, şifrenizi görmez.
+4. Giriş yaptıktan sonra pencereyi kapatın. Oturumunuz (çerezler +
+   localStorage) lokalde `integrations/.sessions/fintables_session.json`
+   dosyasına kaydedilir — bu dosya asla git'e commit'lenmez
+   (`.gitignore`'da), asla bir yere gönderilmez.
+5. **"🔄 Fintables'tan Güncelle"** butonuna her bastığınızda, kayıtlı
+   oturumla Hisse Radar/Tarama sayfası açılıp tablo okunur ve Kolon
+   Eşleştirme adımına gönderilir. Bu tamamen manuel/tek seferlik bir
+   tetiklemedir; arka planda otomatik veya periyodik bir tarama yapılmaz.
+
+**Zorunlu ayar — `config/watchlist.yaml` -> `fintables.screener_url`:**
+Fintables hesabınızda Hisse Radar/Tarama sayfasını açıp adres
+çubuğundaki gerçek URL'i bu alana yapıştırmanız gerekir; Johnny bu
+URL'i tahmin edemez, hesabınıza/kaydettiğiniz filtreye göre değişebilir.
+
+**CSS seçiciler:** Fintables'ın tabloyu nasıl render ettiğini (gerçek
+bir HTML `<table>` mi, yoksa özel bir grid bileşeni mi) doğrulamadan bu
+modül yazıldı. Sayfa standart bir `<table>` değilse
+`integrations/fintables_browser.py` içindeki `fetch_screener_table`
+fonksiyonunun seçici tabanlı okuma kısmını gerçek sayfa yapısına göre
+tamamlamanız gerekebilir; `config/watchlist.yaml` -> `fintables.selectors`
+altından seçicileri güncelleyin.
+
+**Kullanım şartları uyarısı:** Otomasyonu etkinleştirmeden önce
+Fintables'ın güncel kullanım şartlarını kontrol edin. Johnny yalnızca
+sizin kendi Pro hesabınızla zaten görebildiğiniz sayfaları, siz butona
+bastığınızda tek seferlik okur; bot-koruması/CAPTCHA aşma girişimi ya da
+arka planda agresif/periyodik bir tarama yapmaz. Bu araç sizin adınıza
+kullanım şartlarına uygunluğu garanti etmez — sorumluluk kullanıcıya
+aittir.
+
+**Oturum sorunu yaşarsanız:** Sol menüdeki "Oturum yönetimi" altından
+"🗑️ Oturumu Sil" ile kayıtlı oturumu silip 2. adımdan yeniden başlayın.
+
 ## Veri kaynağı ve CSV kolonları
 
-Uygulama varsayılan olarak `data/sample_data.csv` dosyasını okur. Sol
-menüden kendi CSV/Excel dosyanızı da yükleyebilirsiniz.
+Manuel CSV/Excel yükleme ve örnek veri seçenekleri de korunmuştur — sol
+menüden "Dosya yükle (CSV / Excel)" veya "Örnek veri" seçebilirsiniz.
+Varsayılan örnek veri `data/sample_data.csv` dosyasından okunur.
 
 v0.2 ile birlikte hazır alt skorlar (`teknik_skor` vb.) yerine **ham
 gösterge verileri** kullanılıyor; Johnny bu skorları kendi hesaplıyor.
@@ -148,11 +202,11 @@ seçtiğinizde uygulama:
 5. Onaylanan eşleştirmeye göre temizlenmiş DataFrame `score_dataframe`'e
    gönderilir
 
-Bu, doğrudan bir Fintables API/scraping entegrasyonu değildir — dosyayı
-Fintables'tan elle indirip/kopyalayıp yükleme adımı hâlâ kullanıcıdadır;
-`data_mapper.py` sadece kolon adı farklılıklarını ortadan kaldırır. Yeni
-bir takma ad eklemek için `data_mapper.py` içindeki `COLUMN_ALIASES`
-sözlüğüne bir satır eklemek yeterlidir.
+Bu eşleştirme akışı hem manuel dosya yüklemede hem de Fintables tarayıcı
+otomasyonundan gelen veride aynı şekilde çalışır (`app.py` ->
+`render_kolon_eslestirme`). Yeni bir takma ad eklemek için
+`data_mapper.py` içindeki `COLUMN_ALIASES` sözlüğüne bir satır eklemek
+yeterlidir.
 
 ## Klasör yapısı
 
@@ -160,6 +214,9 @@ sözlüğüne bir satır eklemek yeterlidir.
 johnny-terminal/
 ├── app.py                        # Streamlit arayüzü
 ├── data_mapper.py                 # CSV/Excel kolon eşleştirme (Fintables vb. için)
+├── integrations/
+│   ├── fintables_browser.py      # Playwright ile Fintables tarayıcı otomasyonu
+│   └── .sessions/                # Kayıtlı oturum (git'e girmez, .gitignore'da)
 ├── data/
 │   └── sample_data.csv           # Örnek veri (ham göstergeler, standart kolon adlarıyla)
 ├── scoring/
@@ -169,15 +226,16 @@ johnny-terminal/
 │   ├── fundamental_engine.py     # Bilanço/temel skor motoru (20 puan)
 │   └── rule_engine.py            # IF/THEN kural motoru (confluence bonusları)
 ├── config/
-│   └── watchlist.yaml            # Watchlist, eşikler, risk ve skorlama parametreleri
+│   └── watchlist.yaml            # Watchlist, eşikler, risk, skorlama ve Fintables parametreleri
 ├── outputs/                      # Dışa aktarılan sonuç CSV'leri (git'e girmez)
 └── requirements.txt
 ```
 
 ## Yol haritası
 
-v0.4 ile Fintables verisi artık elle yeniden düzenlemeden (kolon
-eşleştirme sayesinde) Johnny Terminal'e aktarılabiliyor. Sıradaki adım,
-bu manuel/yarı otomatik akışı browser automation ile daha da
-kolaylaştırmak olacak. Sistem otomatik emir göndermez; sadece karar
-destek sağlar.
+v0.5 ile Johnny Terminal'in ana veri kaynağı Fintables tarayıcı
+otomasyonu oldu; manuel CSV/Excel yükleme ve örnek veri seçenekleri
+yedek olarak duruyor. Sıradaki olası adımlar: Fintables sayfa
+yapısına göre `fetch_screener_table`'ın seçicilerinin gerçek sayfa
+üzerinde doğrulanması/iyileştirilmesi ve çoklu sayfa/filtre desteği.
+Sistem otomatik emir göndermez; sadece karar destek sağlar.

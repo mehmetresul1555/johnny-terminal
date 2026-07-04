@@ -20,6 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.append(str(BASE_DIR))
 
 import data_mapper  # noqa: E402
+from integrations import fintables_browser  # noqa: E402
 from scoring.johnny_score import OPTIONAL_COLUMNS, REQUIRED_COLUMNS, score_dataframe  # noqa: E402
 
 CONFIG_PATH = BASE_DIR / "config" / "watchlist.yaml"
@@ -49,6 +50,56 @@ def style_table(df: pd.DataFrame):
     return df.style.apply(row_style, axis=1)
 
 
+def render_kolon_eslestirme(df_ham: pd.DataFrame, anahtar_onek: str) -> pd.DataFrame:
+    """Ham (kaynağı ne olursa olsun - dosya ya da Fintables) bir
+    DataFrame için Kolon Eşleştirme arayüzünü çizer ve onaylanan
+    eşleştirmeyle temizlenmiş DataFrame'i döner. Zorunlu kolonlardan
+    biri eşleştirilmemişse hata gösterip st.stop() ile durur."""
+    st.subheader("🔗 Kolon Eşleştirme")
+    st.caption(
+        "Kaynaktaki kolon adları Johnny'nin standart kolonlarıyla birebir "
+        "aynı olmak zorunda değil. Aşağıda otomatik önerilen eşleştirmeyi "
+        "kontrol edip gerekirse düzeltin."
+    )
+
+    with st.expander("📄 Kaynaktaki kolonlar", expanded=False):
+        st.write(list(df_ham.columns))
+
+    oneri = data_mapper.suggest_mapping(df_ham.columns)
+
+    BOS_SECENEK = "(boş bırak)"
+    secenekler = [BOS_SECENEK] + list(df_ham.columns)
+
+    mapping = {}
+    map_cols = st.columns(3)
+    for i, johnny_col in enumerate(data_mapper.STANDARD_COLUMNS):
+        zorunlu = johnny_col in REQUIRED_COLUMNS
+        onerilen = oneri.get(johnny_col)
+        varsayilan_index = secenekler.index(onerilen) if onerilen in secenekler else 0
+        etiket = f"{johnny_col}{' *' if zorunlu else ' (opsiyonel)'}"
+        with map_cols[i % 3]:
+            secim = st.selectbox(
+                etiket,
+                secenekler,
+                index=varsayilan_index,
+                key=f"map_{anahtar_onek}_{johnny_col}",
+            )
+        mapping[johnny_col] = None if secim == BOS_SECENEK else secim
+
+    eksikler = data_mapper.missing_required_columns(mapping, REQUIRED_COLUMNS)
+    if eksikler:
+        st.error(
+            "Eşleştirilmemiş zorunlu kolonlar var, devam etmeden önce "
+            f"yukarıdan seçin: {', '.join(eksikler)}"
+        )
+        st.stop()
+
+    st.success("Tüm zorunlu kolonlar eşleştirildi.")
+    df_temiz = data_mapper.apply_mapping(df_ham, mapping)
+    st.divider()
+    return df_temiz
+
+
 config = load_config()
 default_data_path = BASE_DIR / config.get("data", {}).get("default_file", "data/sample_data.csv")
 
@@ -62,20 +113,57 @@ with st.sidebar:
     st.header("Veri Kaynağı")
     kaynak = st.radio(
         "Kaynak seçin",
-        ["Örnek veri", "Dosya yükle (CSV / Excel)", "Fintables (yakında)"],
+        ["Fintables (Tarayıcı Otomasyonu)", "Dosya yükle (CSV / Excel)", "Örnek veri"],
+        index=0,
     )
 
     uploaded_file = None
-    if kaynak == "Dosya yükle (CSV / Excel)":
-        uploaded_file = st.file_uploader("CSV veya Excel dosyası", type=["csv", "xlsx", "xls"])
-        if uploaded_file is None:
-            st.info("Dosya seçilmedi — örnek veri gösteriliyor.")
-    elif kaynak == "Fintables (yakında)":
-        st.info(
-            "Fintables Pro entegrasyonu bu MVP'de aktif değil. "
-            "Şimdilik Fintables'tan aldığınız tabloyu CSV/Excel olarak "
-            "kaydedip 'Dosya yükle' seçeneğinden yükleyebilirsiniz."
+
+    if kaynak == "Fintables (Tarayıcı Otomasyonu)":
+        st.caption(
+            "Johnny, kendi Fintables Pro oturumunuzu kullanarak Hisse "
+            "Radar sayfasını okur. Şifreniz hiçbir yerde saklanmaz; "
+            "ilk giriş her zaman elle yapılır."
         )
+
+        if fintables_browser.has_saved_session():
+            st.success(f"✅ Oturum kayıtlı ({fintables_browser.session_info()})")
+        else:
+            st.warning("⚠️ Kayıtlı oturum yok, önce giriş yapın.")
+
+        if st.button("🌐 Tarayıcıyı Aç ve Giriş Yap", use_container_width=True):
+            with st.spinner("Tarayıcı açılıyor... açılan pencerede giriş yapıp kapatın."):
+                try:
+                    fintables_browser.launch_login_session(
+                        config.get("fintables", {}).get("login_url")
+                    )
+                    st.success("Oturum kaydedildi.")
+                except fintables_browser.FintablesError as e:
+                    st.error(str(e))
+            st.rerun()
+
+        if st.button("🔄 Fintables'tan Güncelle", use_container_width=True, type="primary"):
+            with st.spinner("Fintables'tan veri çekiliyor..."):
+                try:
+                    df_fintables, _ = fintables_browser.update_from_fintables(config)
+                    st.session_state["fintables_df_ham"] = df_fintables
+                    st.success(f"{len(df_fintables)} satır çekildi.")
+                except fintables_browser.FintablesError as e:
+                    st.error(str(e))
+
+        with st.expander("Oturum yönetimi"):
+            st.caption(
+                "Oturumunuzda sorun yaşıyorsanız (örn. süresi dolmuşsa) "
+                "kayıtlı oturumu silip yeniden giriş yapabilirsiniz."
+            )
+            if st.button("🗑️ Oturumu Sil"):
+                fintables_browser.clear_session()
+                st.session_state.pop("fintables_df_ham", None)
+                st.info("Oturum silindi.")
+                st.rerun()
+
+    elif kaynak == "Dosya yükle (CSV / Excel)":
+        uploaded_file = st.file_uploader("CSV veya Excel dosyası", type=["csv", "xlsx", "xls"])
 
     st.divider()
     st.subheader("Johnny Score Eşikleri")
@@ -112,59 +200,30 @@ with st.sidebar:
         )
 
 # --- Veri yükle ---
-if kaynak == "Dosya yükle (CSV / Excel)" and uploaded_file is not None:
+df_ham = None
+anahtar_onek = None
+
+if kaynak == "Fintables (Tarayıcı Otomasyonu)":
+    df_ham = st.session_state.get("fintables_df_ham")
+    anahtar_onek = "fintables"
+elif kaynak == "Dosya yükle (CSV / Excel)" and uploaded_file is not None:
     try:
         df_ham = data_mapper.read_table(uploaded_file)
     except Exception as e:
         st.error(f"Dosya okunamadı: {e}")
         st.stop()
+    anahtar_onek = f"{uploaded_file.name}_{uploaded_file.size}"
 
-    # --- Kolon Eşleştirme ---
-    st.subheader("🔗 Kolon Eşleştirme")
-    st.caption(
-        "Fintables'tan indirdiğiniz/kopyaladığınız dosyanın kolon adları "
-        "Johnny'nin standart kolonlarıyla birebir aynı olmak zorunda "
-        "değil. Aşağıda otomatik önerilen eşleştirmeyi kontrol edip "
-        "gerekirse düzeltin."
-    )
-
-    with st.expander("📄 Dosyanızdaki kolonlar", expanded=False):
-        st.write(list(df_ham.columns))
-
-    dosya_anahtari = f"{uploaded_file.name}_{uploaded_file.size}"
-    oneri = data_mapper.suggest_mapping(df_ham.columns)
-
-    BOS_SECENEK = "(boş bırak)"
-    secenekler = [BOS_SECENEK] + list(df_ham.columns)
-
-    mapping = {}
-    map_cols = st.columns(3)
-    for i, johnny_col in enumerate(data_mapper.STANDARD_COLUMNS):
-        zorunlu = johnny_col in REQUIRED_COLUMNS
-        onerilen = oneri.get(johnny_col)
-        varsayilan_index = secenekler.index(onerilen) if onerilen in secenekler else 0
-        etiket = f"{johnny_col}{' *' if zorunlu else ' (opsiyonel)'}"
-        with map_cols[i % 3]:
-            secim = st.selectbox(
-                etiket,
-                secenekler,
-                index=varsayilan_index,
-                key=f"map_{dosya_anahtari}_{johnny_col}",
-            )
-        mapping[johnny_col] = None if secim == BOS_SECENEK else secim
-
-    eksikler = data_mapper.missing_required_columns(mapping, REQUIRED_COLUMNS)
-    if eksikler:
-        st.error(
-            "Eşleştirilmemiş zorunlu kolonlar var, devam etmeden önce "
-            f"yukarıdan seçin: {', '.join(eksikler)}"
-        )
-        st.stop()
-
-    st.success("Tüm zorunlu kolonlar eşleştirildi.")
-    df_raw = data_mapper.apply_mapping(df_ham, mapping)
-    st.divider()
+if df_ham is not None:
+    df_raw = render_kolon_eslestirme(df_ham, anahtar_onek)
 else:
+    if kaynak == "Fintables (Tarayıcı Otomasyonu)":
+        st.info(
+            "Henüz Fintables'tan veri çekilmedi. Soldan '🔄 Fintables'tan "
+            "Güncelle' butonuna basın — şimdilik örnek veri gösteriliyor."
+        )
+    elif kaynak == "Dosya yükle (CSV / Excel)":
+        st.info("Dosya seçilmedi — şimdilik örnek veri gösteriliyor.")
     try:
         df_raw = pd.read_csv(default_data_path)
     except Exception as e:

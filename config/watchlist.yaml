@@ -40,8 +40,35 @@ scoring:
 data:
   default_file: "data/sample_data.csv"
 
-# İleride eklenecek Fintables entegrasyonu için yer tutucu.
-# MVP aşamasında kullanılmıyor; sadece arayüzde bilgi amaçlı gösteriliyor.
+# v0.5: Fintables Pro tarayıcı otomasyonu (integrations/fintables_browser.py)
+# Fintables'ın resmi bir API'si yok; bu yüzden Playwright ile kullanıcının
+# KENDİ oturumu üzerinden ilgili sayfa açılıp okunuyor. Şifre hiçbir yerde
+# saklanmaz; ilk giriş her zaman elle yapılır (bkz. README "Fintables
+# Kurulumu").
 fintables:
-  enabled: false
-  note: "Fintables Pro tablolarından manuel/yarı otomatik veri aktarımı ve ileride browser automation ile otomatik çekim planlanıyor."
+  enabled: true
+
+  # Genel giriş sayfası (herkese açık, doğrulandı: fintables.com/auth/login).
+  login_url: "https://fintables.com/auth/login"
+
+  # ÖNEMLİ: Aşağıdaki URL bir YER TUTUCUDUR. Kendi Fintables hesabınızda
+  # Hisse Radar/Tarama sayfasını açıp adres çubuğundaki gerçek URL'i
+  # buraya yapıştırın. Bu URL hesabınıza/kaydettiğiniz filtreye göre
+  # değişebilir; Johnny bunu tahmin edemez.
+  screener_url: ""  # örn. "https://fintables.com/radar"
+
+  # Veri çekerken tarayıcı görünsün mü? Sorun gidermek için false yapıp
+  # neler olduğunu izleyebilirsiniz; günlük kullanımda true (görünmez)
+  # önerilir.
+  headless: true
+
+  # Fintables'ın tablo/grid yapısına göre ayarlanması gereken CSS
+  # seçiciler. Sayfa gerçek bir <table> kullanmıyorsa (özel bir grid
+  # bileşeniyse) integrations/fintables_browser.py içindeki
+  # fetch_screener_table fonksiyonunun bu duruma göre genişletilmesi
+  # gerekir.
+  selectors:
+    table: "table"
+    row: "tr"
+
+  note: "Otomasyonu etkinleştirmeden önce Fintables'ın güncel kullanım şartlarını kontrol edin. Johnny yalnızca kullanıcının kendi Pro hesabıyla zaten görebildiği sayfaları, manuel tetikleme ile (arka planda otomatik/periyodik tarama yapmadan) okur."
