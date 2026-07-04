@@ -51,24 +51,64 @@ fintables:
   # Genel giriş sayfası (herkese açık, doğrulandı: fintables.com/auth/login).
   login_url: "https://fintables.com/auth/login"
 
-  # ÖNEMLİ: Aşağıdaki URL bir YER TUTUCUDUR. Kendi Fintables hesabınızda
-  # Hisse Radar/Tarama sayfasını açıp adres çubuğundaki gerçek URL'i
-  # buraya yapıştırın. Bu URL hesabınıza/kaydettiğiniz filtreye göre
-  # değişebilir; Johnny bunu tahmin edemez.
-  screener_url: ""  # örn. "https://fintables.com/radar"
+  # Hisse Radar sayfası. integrations/explore_fintables_dom.py ile
+  # gerçek bir oturumda DOĞRULANDI (2026): sayfa gerçek bir HTML
+  # <table class="grid"> kullanıyor. Farklı bir görünüm/filtre
+  # kullanmak isterseniz kendi hesabınızda o sayfayı açıp URL'i
+  # değiştirebilirsiniz.
+  screener_url: "https://fintables.com/radar/hisse-senetleri"
 
   # Veri çekerken tarayıcı görünsün mü? Sorun gidermek için false yapıp
   # neler olduğunu izleyebilirsiniz; günlük kullanımda true (görünmez)
   # önerilir.
-  headless: true
+  headless: false
 
-  # Fintables'ın tablo/grid yapısına göre ayarlanması gereken CSS
-  # seçiciler. Sayfa gerçek bir <table> kullanmıyorsa (özel bir grid
-  # bileşeniyse) integrations/fintables_browser.py içindeki
-  # fetch_screener_table fonksiyonunun bu duruma göre genişletilmesi
-  # gerekir.
+  # Doğrulanmış tablo yapısı: table.grid > thead > tr > th (başlıklar),
+  # table.grid > tbody.grid.relative > tr > td (veri satırları).
+  # fetch_radar_table() bu seçiciyi kullanır.
   selectors:
-    table: "table"
+    table: "table.grid"
     row: "tr"
 
-  note: "Otomasyonu etkinleştirmeden önce Fintables'ın güncel kullanım şartlarını kontrol edin. Johnny yalnızca kullanıcının kendi Pro hesabıyla zaten görebildiği sayfaları, manuel tetikleme ile (arka planda otomatik/periyodik tarama yapmadan) okur."
+  # v1.0 "final akış": Radar'daki ~640 hisse arasından basit bir ön
+  # elemeyle (bkz. scoring/pre_screen.py) ilk top_n aday seçilir; SADECE
+  # bunların detay/Teknik Analiz sayfasına girilir (640 hissenin tamamına
+  # DEĞİL).
+  pre_screen:
+    top_n: 10
+
+  # v1.0: Ön elemeden geçen adayların Teknik Analiz sayfası ayarları.
+  # UYARI: url_template ve selectors HENÜZ gerçek bir Fintables hisse
+  # detay sayfasında DOĞRULANMADI (Radar tablosu için yapılan DOM
+  # taramasının bir benzeri bu sayfa için de gerekiyor - bkz.
+  # integrations/fintables_browser.py modül docstring'i). Bir seçici
+  # boş/yanlış olursa ilgili alan boş (None) döner, sistem çökmez;
+  # ama o hissenin ilgili göstergesi de eksik kalır.
+  detay:
+    # {ticker} yerine hisse kodu (örn. SASA) konur. Fintables'ın genel
+    # şirket sayfası kalıbına (fintables.com/sirketler/{TICKER}) göre
+    # TAHMİN edilmiştir - gerçek Teknik Analiz alt sayfası/sekmesi
+    # DOĞRULANMALIDIR.
+    url_template: "https://fintables.com/sirketler/{ticker}/teknik-analiz"
+
+    # Her hissenin sayfası açıldıktan sonra bu CSS seçicilerle ilgili
+    # değer okunur (inner text olarak). Şimdilik BOŞ - gerçek sayfa
+    # taranıp doldurulmalı.
+    selectors:
+      rsi: ""
+      macd_signal: ""
+      ema20: ""
+      ema50: ""
+      ema200: ""
+      adx: ""
+      atr_pct: ""
+
+    # Her hisse arasında kısa, rastgele bir bekleme (saniye) - "yavaş ve
+    # güvenli" çalışma isteği için.
+    bekleme_min_sn: 2.0
+    bekleme_max_sn: 4.0
+
+    # Detay sayfası açma/element bekleme zaman aşımı (ms)
+    timeout_ms: 30000
+
+  note: "Otomasyonu etkinleştirmeden önce Fintables'ın güncel kullanım şartlarını kontrol edin. Johnny yalnızca kullanıcının kendi Pro hesabıyla zaten görebildiği sayfaları, manuel tetikleme ile (arka planda otomatik/periyodik tarama yapmadan) okur. Şimdilik sadece sayfa ilk açıldığında görünen 'Getiri' sekmesi okunur; filtre/sekme değiştirme henüz yapılmıyor."

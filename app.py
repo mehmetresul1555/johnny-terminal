@@ -143,13 +143,36 @@ with st.sidebar:
             st.rerun()
 
         if st.button("🔄 Fintables'tan Güncelle", use_container_width=True, type="primary"):
-            with st.spinner("Fintables'tan veri çekiliyor..."):
+            # v1.0 akışı: Radar oku -> ön eleme (ilk N aday) -> SADECE bu
+            # adayların Teknik Analiz sayfasını oku -> birleştir. 640
+            # hissenin tamamına GİRİLMEZ; her hisse arasında kısa bekleme
+            # var, bir hissede hata olursa o hisse atlanır/loglanır,
+            # sistem durmaz (bkz. integrations/fintables_browser.py ->
+            # run_full_update).
+            with st.status("Fintables'tan güncelleniyor...", expanded=True) as durum:
+                def _ilerleme_yaz(mesaj):
+                    durum.write(mesaj)
+
                 try:
-                    df_fintables, _ = fintables_browser.update_from_fintables(config)
+                    df_fintables, hata_listesi = fintables_browser.run_full_update(
+                        config, on_progress=_ilerleme_yaz
+                    )
                     st.session_state["fintables_df_ham"] = df_fintables
-                    st.success(f"{len(df_fintables)} satır çekildi.")
+                    st.session_state["fintables_hata_listesi"] = hata_listesi
+                    durum.update(
+                        label=f"Tamamlandı: {len(df_fintables)} hisse işlendi.",
+                        state="complete",
+                    )
                 except fintables_browser.FintablesError as e:
+                    durum.update(label="Hata oluştu", state="error")
                     st.error(str(e))
+
+        if st.session_state.get("fintables_hata_listesi"):
+            with st.expander(
+                f"⚠️ Atlanan hisseler ({len(st.session_state['fintables_hata_listesi'])})"
+            ):
+                for ticker, hata_mesaji in st.session_state["fintables_hata_listesi"]:
+                    st.write(f"**{ticker}**: {hata_mesaji}")
 
         with st.expander("Oturum yönetimi"):
             st.caption(
@@ -159,6 +182,7 @@ with st.sidebar:
             if st.button("🗑️ Oturumu Sil"):
                 fintables_browser.clear_session()
                 st.session_state.pop("fintables_df_ham", None)
+                st.session_state.pop("fintables_hata_listesi", None)
                 st.info("Oturum silindi.")
                 st.rerun()
 

@@ -36,8 +36,14 @@ STANDARD_COLUMNS = [
     "yeni_is_iliskisi",
 ]
 
-# Zorunlu olmayan (opsiyonel) standart kolonlar
-OPTIONAL_STANDARD_COLUMNS = ["yeni_is_iliskisi", "gerekce_notu"]
+# Zorunlu olmayan (opsiyonel) standart kolonlar. haber_puani/kurumsal_puani/
+# piyasa_rejimi Fintables'tan hiçbir zaman gelmez (Johnny'nin kendi öznel
+# puanlarıdır); eksik olduklarında scoring/johnny_score.py nötr bir
+# varsayılan (5/10) kullanır.
+OPTIONAL_STANDARD_COLUMNS = [
+    "yeni_is_iliskisi", "gerekce_notu",
+    "haber_puani", "kurumsal_puani", "piyasa_rejimi",
+]
 
 # Her Johnny kolonu için bilinen Türkçe/İngilizce takma adlar (normalize
 # edilmiş haliyle karşılaştırılır; bkz. _normalize). İlk eleman kanonik

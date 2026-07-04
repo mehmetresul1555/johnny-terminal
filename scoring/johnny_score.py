@@ -26,10 +26,24 @@ Motorlar:
     scoring/fundamental_engine.py  -> Bilanço/Temel skor (max 20)
     scoring/rule_engine.py         -> IF/THEN kural bonusları
 
-Geri kalan üç alt skor CSV'de doğrudan puan olarak verilir:
+Geri kalan üç alt skor CSV'de doğrudan puan olarak verilebilir, ama
+v0.5'ten itibaren OPSİYONELDİR (Fintables bu üçünü hiçbir zaman
+sağlamaz, çünkü bunlar Johnny'nin kendi öznel değerlendirmeleridir):
     haber_puani         -> Haber/KAP/Katalizör skoru      (max 10)
+                           Eksikse varsayılan: 5/10.
+                           TODO (gelecek): KAP bildirimlerinden otomatik
+                           üretilecek (KAP entegrasyonu).
     kurumsal_puani      -> Kurumsal beklenti skoru         (max 10)
+                           Eksikse varsayılan: 5/10.
+                           TODO (gelecek): analist hedef fiyatları ve
+                           kurum beklentilerinden otomatik üretilecek.
     piyasa_rejimi       -> Piyasa rejimi skoru             (max 10)
+                           Eksikse varsayılan: 5/10.
+                           TODO (gelecek): Johnny tarafından otomatik
+                           hesaplanacak - BIST100 günlük değişim, XBANK,
+                           XUSIN, işlem hacmi, VIX (opsiyonel) ve
+                           USD/TRY (opsiyonel) verilerine bakılarak.
+                           Kullanıcı bu üç kolonu manuel doldurmayacak.
 
 Taban puanın 6 bileşeni (toplamda 100 puana denk gelir, ama son skora
 damping uygulanmış haliyle katılır):
@@ -74,19 +88,27 @@ SUB_SCORE_MAX = {
 # watchlist.yaml -> scoring.base_damping). 1.0 = eski (v2) lineer davranış.
 DEFAULT_BASE_DAMPING = 0.6
 
-# Skorlama için zorunlu ham kolonlar (hepsi CSV'de bulunmalı)
+# haber_puani / kurumsal_puani / piyasa_rejimi Fintables'tan hiçbir zaman
+# gelmez (bunlar Johnny'nin kendi öznel puanlarıdır) - eksik olduklarında
+# kullanılacak nötr varsayılan (10 üzerinden 5 = tam ortada, ne olumlu ne
+# olumsuz bir sinyal).
+DEFAULT_HABER_PUANI = 5.0
+DEFAULT_KURUMSAL_PUANI = 5.0
+DEFAULT_PIYASA_REJIMI = 5.0
+
+# Skorlama için zorunlu ham kolonlar (hepsi CSV'de bulunmalı). Not:
+# haber_puani/kurumsal_puani/piyasa_rejimi burada YOK - bkz. OPTIONAL_COLUMNS.
 REQUIRED_COLUMNS = (
     ["hisse", "fiyat"]
     + technical_engine.REQUIRED_COLUMNS
     + momentum_engine.REQUIRED_COLUMNS
     + fundamental_engine.REQUIRED_COLUMNS
-    + ["haber_puani", "kurumsal_puani", "piyasa_rejimi"]
 )
 # Yinelenen kolonları (örn. fiyat/atr_pct/ema20 birden fazla motor kullanabilir) temizle
 REQUIRED_COLUMNS = list(dict.fromkeys(REQUIRED_COLUMNS))
 
-# Opsiyonel kolonlar: yoksa varsayılan (nötr/kapalı) değerle çalışılır
-OPTIONAL_COLUMNS = ["yeni_is_iliskisi"]
+# Opsiyonel kolonlar: yoksa (veya NaN/boşsa) varsayılan değerle çalışılır
+OPTIONAL_COLUMNS = ["yeni_is_iliskisi", "haber_puani", "kurumsal_puani", "piyasa_rejimi"]
 
 LABELS = {
     "teknik_skor": "Teknik",
@@ -108,6 +130,27 @@ def _clip(value, max_value):
     return max(0.0, min(value, max_value))
 
 
+def _opsiyonel_puan(row, kolon_adi, varsayilan, max_value):
+    """haber_puani / kurumsal_puani / piyasa_rejimi gibi opsiyonel puan
+    kolonları için: kolon hiç yoksa ya da değer boş/NaN ise varsayılanı
+    kullanır (ve kullanıldığını True olarak işaretler), aksi halde
+    değeri 0-max_value arasına sıkıştırır.
+
+    Returns:
+        (skor: float, varsayilan_kullanildi: bool)
+    """
+    deger = row.get(kolon_adi, None)
+    if deger is None:
+        return varsayilan, True
+    try:
+        f = float(deger)
+    except (TypeError, ValueError):
+        return varsayilan, True
+    if f != f:  # NaN kontrolü
+        return varsayilan, True
+    return _clip(f, max_value), False
+
+
 def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
     """Taban puan (üç motor + haber/kurumsal/piyasa) ile kural motoru
     bonuslarını birleştirip toplam Johnny Score'u hesaplar.
@@ -122,6 +165,8 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
         dict: {
             "total": float,                # 0-100 final Johnny Score
             "clipped": dict,                # 6 alt skor (taban, damping'siz)
+            "varsayilan_kullanildi": dict,   # haber/kurumsal/piyasa_rejimi_skor
+                                             # icin varsayilan deger kullanildi mi?
             "engine_detail": dict,          # motorların ayrıntılı kırılımı
             "base_score": float,            # taban puan * base_damping
             "rule_bonus": float,            # tetiklenen kuralların toplamı
@@ -132,9 +177,15 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
     momentum_skor, momentum_detay = momentum_engine.compute_momentum_score(row)
     bilanco_skor, bilanco_detay = fundamental_engine.compute_fundamental_score(row)
 
-    haber_skor = _clip(row.get("haber_puani", 0), SUB_SCORE_MAX["haber_skor"])
-    kurumsal_skor = _clip(row.get("kurumsal_puani", 0), SUB_SCORE_MAX["kurumsal_skor"])
-    piyasa_skor = _clip(row.get("piyasa_rejimi", 0), SUB_SCORE_MAX["piyasa_rejimi_skor"])
+    haber_skor, haber_varsayilan = _opsiyonel_puan(
+        row, "haber_puani", DEFAULT_HABER_PUANI, SUB_SCORE_MAX["haber_skor"]
+    )
+    kurumsal_skor, kurumsal_varsayilan = _opsiyonel_puan(
+        row, "kurumsal_puani", DEFAULT_KURUMSAL_PUANI, SUB_SCORE_MAX["kurumsal_skor"]
+    )
+    piyasa_skor, piyasa_varsayilan = _opsiyonel_puan(
+        row, "piyasa_rejimi", DEFAULT_PIYASA_REJIMI, SUB_SCORE_MAX["piyasa_rejimi_skor"]
+    )
 
     clipped = {
         "teknik_skor": teknik_skor,
@@ -143,6 +194,11 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
         "haber_skor": haber_skor,
         "kurumsal_skor": kurumsal_skor,
         "piyasa_rejimi_skor": piyasa_skor,
+    }
+    varsayilan_kullanildi = {
+        "haber_skor": haber_varsayilan,
+        "kurumsal_skor": kurumsal_varsayilan,
+        "piyasa_rejimi_skor": piyasa_varsayilan,
     }
     engine_detail = {
         "teknik": teknik_detay,
@@ -160,6 +216,7 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
     return {
         "total": total,
         "clipped": clipped,
+        "varsayilan_kullanildi": varsayilan_kullanildi,
         "engine_detail": engine_detail,
         "base_score": base_score,
         "rule_bonus": rule_bonus,
@@ -259,13 +316,19 @@ def generate_reason_bullets(score_result):
         list[str]: her biri bir madde (bullet) olacak metin listesi.
     """
     clipped = score_result["clipped"]
+    varsayilan_kullanildi = score_result.get("varsayilan_kullanildi", {})
     fired_rules = score_result["fired_rules"]
     base_score = score_result["base_score"]
     rule_bonus = score_result["rule_bonus"]
 
     bullets = []
     for key in ["teknik_skor", "momentum_skor", "bilanco_skor", "haber_skor", "kurumsal_skor", "piyasa_rejimi_skor"]:
-        bullets.append(f"{LABELS[key]}: {clipped[key]:.0f}/{SUB_SCORE_MAX[key]} puan (taban analiz)")
+        etiket = f"{LABELS[key]}: {clipped[key]:.0f}/{SUB_SCORE_MAX[key]} puan"
+        if varsayilan_kullanildi.get(key):
+            etiket += " (veri yok, nötr varsayılan kullanıldı)"
+        else:
+            etiket += " (taban analiz)"
+        bullets.append(etiket)
 
     bullets.append(f"Taban puan (damping uygulanmış): {base_score:.1f} puan")
 

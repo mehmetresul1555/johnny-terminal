@@ -1,6 +1,6 @@
 # Johnny Terminal
 
-BIST günlük trade karar destek sistemi (v0.5).
+BIST günlük trade karar destek sistemi (v1.0).
 
 Bu araç **otomatik emir göndermez**. Her sabah BIST hisseleri arasından en iyi
 3 trade adayını bulup her biri için alım aralığı, stop, hedef 1, hedef 2 ve
@@ -41,12 +41,12 @@ Masaüstünden çift tıklayarak açmak isterseniz, proje klasöründeki
 
 ## Fintables Kurulumu (tarayıcı otomasyonu)
 
-v0.5 ile Johnny Terminal'in ana veri kaynağı **Fintables Pro tarayıcı
+Johnny Terminal'in ana veri kaynağı **Fintables Pro tarayıcı
 otomasyonu**dur (`integrations/fintables_browser.py`). Fintables'ın
 resmi bir API'si olmadığı için Playwright ile kullanıcının KENDİ
-oturumu üzerinden ilgili sayfa açılıp okunur.
+oturumu üzerinden ilgili sayfalar açılıp okunur.
 
-**Nasıl çalışır:**
+**Nasıl çalışır (giriş):**
 
 1. Sol menüden "Fintables (Tarayıcı Otomasyonu)" seçili (varsayılan).
 2. **"🌐 Tarayıcıyı Aç ve Giriş Yap"** butonuna basın — gerçek bir
@@ -57,23 +57,47 @@ oturumu üzerinden ilgili sayfa açılıp okunur.
    localStorage) lokalde `integrations/.sessions/fintables_session.json`
    dosyasına kaydedilir — bu dosya asla git'e commit'lenmez
    (`.gitignore`'da), asla bir yere gönderilmez.
-5. **"🔄 Fintables'tan Güncelle"** butonuna her bastığınızda, kayıtlı
-   oturumla Hisse Radar/Tarama sayfası açılıp tablo okunur ve Kolon
-   Eşleştirme adımına gönderilir. Bu tamamen manuel/tek seferlik bir
-   tetiklemedir; arka planda otomatik veya periyodik bir tarama yapılmaz.
 
-**Zorunlu ayar — `config/watchlist.yaml` -> `fintables.screener_url`:**
-Fintables hesabınızda Hisse Radar/Tarama sayfasını açıp adres
-çubuğundaki gerçek URL'i bu alana yapıştırmanız gerekir; Johnny bu
-URL'i tahmin edemez, hesabınıza/kaydettiğiniz filtreye göre değişebilir.
+**v1.0 "final akış" ("🔄 Fintables'tan Güncelle" butonuna her bastığınızda):**
 
-**CSS seçiciler:** Fintables'ın tabloyu nasıl render ettiğini (gerçek
-bir HTML `<table>` mi, yoksa özel bir grid bileşeni mi) doğrulamadan bu
-modül yazıldı. Sayfa standart bir `<table>` değilse
-`integrations/fintables_browser.py` içindeki `fetch_screener_table`
-fonksiyonunun seçici tabanlı okuma kısmını gerçek sayfa yapısına göre
-tamamlamanız gerekebilir; `config/watchlist.yaml` -> `fintables.selectors`
-altından seçicileri güncelleyin.
+1. Kayıtlı oturumla Hisse Radar ana tablosu (`https://fintables.com/radar/hisse-senetleri`) açılıp okunur (~640 hisse).
+2. Radar verisiyle basit, şeffaf bir **ön eleme** yapılır (`scoring/pre_screen.py`) — hacim, günlük değişim ve kısa vadeli getiri kolonlarının percentile rank ortalamasına göre.
+3. Ön elemeden geçen **ilk 10 aday** (`config/watchlist.yaml` -> `fintables.pre_screen.top_n`) seçilir.
+4. **Sadece bu 10 hissenin** detay/Teknik Analiz sayfasına girilir — kalan ~630 hissenin detayına HİÇ girilmez.
+5. Her aday için RSI, MACD, EMA20/50/200, ADX, ATR okunur ve Radar verisiyle birleştirilir.
+6. Birleşen ham veri, mevcut Kolon Eşleştirme adımına gönderilir; oradan Johnny Score hesaplanır ve Top 3 gösterilir.
+
+Bu akış tek bir tarayıcı oturumunda, adaylar SIRAYLA (paralel değil) gezilerek çalışır; her hisse arasında kısa, rastgele bir bekleme bırakılır (`fintables.detay.bekleme_min_sn` / `bekleme_max_sn`, varsayılan 2-4 saniye) — "yavaş ve güvenli" çalışma prensibi. Bir hissenin detay sayfası açılamaz/okunamazsa o hisse ATLANIR ve arayüzde "⚠️ Atlanan hisseler" bölümünde nedeniyle birlikte listelenir; sistem durmaz, kalan adaylarla devam eder. İlerleme adımları buton altında canlı bir günlük olarak gösterilir.
+
+**Doğrulanmış sayfa yapısı (Radar):** Hisse Radar sayfasının DOM yapısı
+`integrations/explore_fintables_dom.py` ile gerçek bir oturumda
+tarandı: sayfa gerçek bir HTML `table.grid` kullanıyor
+(`thead > tr > th` başlıklar, `tbody.grid.relative > tr > td` veri
+satırları). `fetch_radar_table()` bu yapıya göre yazıldı; başlık ile
+hücre sayısı uyuşmayan satırlar sessizce atlanmaz, terminale uyarı
+olarak loglanıp güvenli şekilde atlanır. Sayfa ilk açıldığında ~640
+satırın tamamı DOM'da görünmeyebileceğinden, tablo okunmadan önce
+mümkün olduğunca çok satırın yüklenmesi için EN İYİ ÇABA (best-effort,
+doğrulanmamış) bir aşağı kaydırma denemesi yapılır. Şimdilik sadece
+sayfa ilk açıldığında görünen "Getiri" sekmesindeki tablo okunur;
+filtre/sekme değiştirme henüz yapılmıyor (bilinçli kapsam sınırlaması).
+
+**DOĞRULANMADI (Detay/Teknik Analiz sayfası):** `fetch_technical_detail`
+ve `run_full_update`'in kullandığı hisse detay sayfası URL şablonu
+(`config/watchlist.yaml` -> `fintables.detay.url_template`) ve CSS
+seçicileri (`fintables.detay.selectors`) henüz gerçek bir Fintables
+hisse detay sayfası üzerinde DOM taramasıyla doğrulanmadı — şu an yer
+tutucudur (seçiciler varsayılan olarak boştur). Radar tablosunda
+yapıldığı gibi (`explore_fintables_dom.py`), bir hissenin gerçek Teknik
+Analiz sayfası açılıp DOM'u incelenmeli, ardından
+`config/watchlist.yaml` -> `fintables.detay.selectors` gerçek CSS
+seçicileriyle doldurulmalıdır. Seçiciler boş/yanlış olduğu sürece
+teknik alanlar boş (`None`) gelir; bu sistemi çökertmez ama teknik
+skorlar eksik veriyle (nötr varsayılanlarla) hesaplanır.
+
+Farklı bir Radar görünümü/filtresi kullanmak isterseniz
+`config/watchlist.yaml` -> `fintables.screener_url` değerini kendi
+kaydettiğiniz sayfa URL'iyle değiştirebilirsiniz.
 
 **Kullanım şartları uyarısı:** Otomasyonu etkinleştirmeden önce
 Fintables'ın güncel kullanım şartlarını kontrol edin. Johnny yalnızca
@@ -112,14 +136,22 @@ Dosyanın aşağıdaki kolonları içermesi gerekir:
 | `pddd` | Evet | Piyasa Değeri/Defter Değeri oranı |
 | `roe` | Evet | Özkaynak karlılığı (%) |
 | `net_borc_favok` | Evet | Net Borç/FAVÖK (kaldıraç çarpanı) |
-| `haber_puani` | Evet | Haber/KAP/katalizör puanı (0-10, elle veya Fintables'tan) |
-| `kurumsal_puani` | Evet | Kurumsal beklenti puanı (0-10) |
-| `piyasa_rejimi` | Evet | Piyasa rejimi puanı (0-10) |
+| `haber_puani` | Opsiyonel | Haber/KAP/katalizör puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride KAP entegrasyonuyla otomatikleşecek. |
+| `kurumsal_puani` | Opsiyonel | Kurumsal beklenti puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride analist hedef fiyatlarından otomatikleşecek. |
+| `piyasa_rejimi` | Opsiyonel | Piyasa rejimi puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride BIST100/XBANK/XUSIN/hacim/VIX/USD-TRY verilerinden Johnny tarafından otomatik hesaplanacak. |
 | `yeni_is_iliskisi` | Opsiyonel | Yeni bir iş ilişkisi/ortaklık var mı (1/0). Rule Engine'in R4 kuralı için kullanılır; yoksa 0 kabul edilir |
 
-Alt skorlar kendi maksimum değerlerinin üzerine çıkarsa otomatik olarak
-sınırlanır (clip edilir); eksik/bozuk veri güvenli varsayılanlarla (0 veya
-nötr bir değer) işlenir, uygulama çökmez.
+`haber_puani`, `kurumsal_puani` ve `piyasa_rejimi` Johnny'nin kendi
+öznel değerlendirmeleridir — Fintables (veya başka bir piyasa verisi
+sağlayıcısı) bunları asla kolon olarak sunmaz. Bu yüzden kullanıcının
+bunları hiçbir zaman elle doldurması beklenmez; eksik olduklarında
+nötr bir varsayılan (5/10, ne olumlu ne olumsuz) kullanılır ve "Johnny
+neden bu puanı verdi?" bölümünde "veri yok, nötr varsayılan kullanıldı"
+notuyla açıkça belirtilir.
+
+Diğer tüm alt skorlar kendi maksimum değerlerinin üzerine çıkarsa
+otomatik olarak sınırlanır (clip edilir); eksik/bozuk veri güvenli
+varsayılanlarla işlenir, uygulama çökmez.
 
 ## Johnny Score nedir?
 
@@ -215,7 +247,8 @@ johnny-terminal/
 ├── app.py                        # Streamlit arayüzü
 ├── data_mapper.py                 # CSV/Excel kolon eşleştirme (Fintables vb. için)
 ├── integrations/
-│   ├── fintables_browser.py      # Playwright ile Fintables tarayıcı otomasyonu
+│   ├── fintables_browser.py      # Playwright ile Fintables tarayıcı otomasyonu (Radar okuma, ön eleme sonrası detay okuma, run_full_update orkestratörü)
+│   ├── explore_fintables_dom.py  # Tek seferlik DOM keşif aracı (terminalden çalıştırılır)
 │   └── .sessions/                # Kayıtlı oturum (git'e girmez, .gitignore'da)
 ├── data/
 │   └── sample_data.csv           # Örnek veri (ham göstergeler, standart kolon adlarıyla)
@@ -224,7 +257,8 @@ johnny-terminal/
 │   ├── technical_engine.py       # Teknik skor motoru (30 puan)
 │   ├── momentum_engine.py        # Momentum skor motoru (20 puan)
 │   ├── fundamental_engine.py     # Bilanço/temel skor motoru (20 puan)
-│   └── rule_engine.py            # IF/THEN kural motoru (confluence bonusları)
+│   ├── rule_engine.py            # IF/THEN kural motoru (confluence bonusları)
+│   └── pre_screen.py             # v1.0: Radar verisiyle ilk N adayı seçen ön eleme mantığı
 ├── config/
 │   └── watchlist.yaml            # Watchlist, eşikler, risk, skorlama ve Fintables parametreleri
 ├── outputs/                      # Dışa aktarılan sonuç CSV'leri (git'e girmez)
@@ -233,9 +267,22 @@ johnny-terminal/
 
 ## Yol haritası
 
-v0.5 ile Johnny Terminal'in ana veri kaynağı Fintables tarayıcı
-otomasyonu oldu; manuel CSV/Excel yükleme ve örnek veri seçenekleri
-yedek olarak duruyor. Sıradaki olası adımlar: Fintables sayfa
-yapısına göre `fetch_screener_table`'ın seçicilerinin gerçek sayfa
-üzerinde doğrulanması/iyileştirilmesi ve çoklu sayfa/filtre desteği.
+Johnny Terminal'in ana veri kaynağı Fintables tarayıcı otomasyonudur;
+manuel CSV/Excel yükleme ve örnek veri seçenekleri yedek olarak
+duruyor. v1.0 ile Radar ön eleme + ilk 10 adayın detay/Teknik Analiz
+sayfasından teknik veri okuma akışı eklendi (bkz. "Fintables Kurulumu").
+
+Sıradaki olası adımlar:
+
+- Hisse detay/Teknik Analiz sayfasının gerçek DOM yapısının
+  `explore_fintables_dom.py` benzeri bir araçla taranıp
+  `config/watchlist.yaml` -> `fintables.detay.selectors` ve
+  `url_template` değerlerinin doğrulanması (şu an yer tutucu).
+- Radar tablosunun ~640 satırının tamamının güvenilir şekilde
+  yüklenmesi (şu an best-effort bir kaydırma denemesi var; Fintables'ın
+  grid bileşeni tamamen sanallaştırılmışsa yetersiz kalabilir).
+- `haber_puani`/`kurumsal_puani`/`piyasa_rejimi` için planlanan otomatik
+  hesaplama (KAP entegrasyonu, analist hedef fiyatları, piyasa
+  endeksleri/hacim verisi).
+
 Sistem otomatik emir göndermez; sadece karar destek sağlar.
