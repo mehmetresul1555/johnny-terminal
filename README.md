@@ -1,6 +1,6 @@
 # Johnny Terminal
 
-BIST günlük trade karar destek sistemi (v0.3).
+BIST günlük trade karar destek sistemi (v0.4).
 
 Bu araç **otomatik emir göndermez**. Her sabah BIST hisseleri arasından en iyi
 3 trade adayını bulup her biri için alım aralığı, stop, hedef 1, hedef 2 ve
@@ -130,13 +130,38 @@ verdi?" başlıklı, madde madde (taban analiz + tetiklenen kurallar) detaylı
 bir açıklama üretilir; arayüzde Top 3 kartlarının altında ve tam tablonun
 altındaki genişletilebilir bölümde görüntülenir.
 
+## Kolon Eşleştirme (Fintables ve diğer kaynaklar için)
+
+Fintables Pro'dan (veya başka bir kaynaktan) indirdiğiniz/kopyaladığınız
+CSV/Excel dosyasının kolon adları Johnny'nin standart kolon adlarıyla
+birebir aynı olmak zorunda değildir. "Dosya yükle" ile bir dosya
+seçtiğinizde uygulama:
+
+1. Dosyadaki kolon adlarını gösterir
+2. `data_mapper.py` içindeki Türkçe/İngilizce takma ad (alias) sözlüğüyle
+   her Johnny kolonu için otomatik bir eşleşme önerir (örn. "Son Fiyat" ->
+   `fiyat`, "RSI(14)" -> `rsi`, "Net Borç/FAVÖK" -> `net_borc_favok`)
+3. Eksik kalan veya yanlış eşleşen kolonlar için açılır menüden elle
+   düzeltme yapabilirsiniz
+4. Zorunlu kolonların tamamı eşleşmeden skorlama çalışmaz; eksik olanlar
+   açıkça listelenir
+5. Onaylanan eşleştirmeye göre temizlenmiş DataFrame `score_dataframe`'e
+   gönderilir
+
+Bu, doğrudan bir Fintables API/scraping entegrasyonu değildir — dosyayı
+Fintables'tan elle indirip/kopyalayıp yükleme adımı hâlâ kullanıcıdadır;
+`data_mapper.py` sadece kolon adı farklılıklarını ortadan kaldırır. Yeni
+bir takma ad eklemek için `data_mapper.py` içindeki `COLUMN_ALIASES`
+sözlüğüne bir satır eklemek yeterlidir.
+
 ## Klasör yapısı
 
 ```
 johnny-terminal/
 ├── app.py                        # Streamlit arayüzü
+├── data_mapper.py                 # CSV/Excel kolon eşleştirme (Fintables vb. için)
 ├── data/
-│   └── sample_data.csv           # Örnek veri (ham göstergeler)
+│   └── sample_data.csv           # Örnek veri (ham göstergeler, standart kolon adlarıyla)
 ├── scoring/
 │   ├── johnny_score.py           # Johnny Score v3 - taban puan + kural bonusu, durum, risk seviyeleri
 │   ├── technical_engine.py       # Teknik skor motoru (30 puan)
@@ -151,7 +176,8 @@ johnny-terminal/
 
 ## Yol haritası
 
-Bu MVP; CSV/Excel dosyalarından manuel/yarı otomatik veri okur. İleride
-Fintables Pro entegrasyonu (`config/watchlist.yaml` içindeki `fintables`
-bloğu) ile veri akışı otomatikleştirilecek. Sistem otomatik emir göndermez;
-sadece karar destek sağlar.
+v0.4 ile Fintables verisi artık elle yeniden düzenlemeden (kolon
+eşleştirme sayesinde) Johnny Terminal'e aktarılabiliyor. Sıradaki adım,
+bu manuel/yarı otomatik akışı browser automation ile daha da
+kolaylaştırmak olacak. Sistem otomatik emir göndermez; sadece karar
+destek sağlar.

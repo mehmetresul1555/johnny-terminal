@@ -19,7 +19,8 @@ import yaml
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.append(str(BASE_DIR))
 
-from scoring.johnny_score import REQUIRED_COLUMNS, score_dataframe  # noqa: E402
+import data_mapper  # noqa: E402
+from scoring.johnny_score import OPTIONAL_COLUMNS, REQUIRED_COLUMNS, score_dataframe  # noqa: E402
 
 CONFIG_PATH = BASE_DIR / "config" / "watchlist.yaml"
 OUTPUTS_DIR = BASE_DIR / "outputs"
@@ -32,14 +33,6 @@ st.set_page_config(page_title="Johnny Terminal", page_icon="📈", layout="wide"
 def load_config():
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def load_dataframe(uploaded_file, default_path: Path):
-    if uploaded_file is not None:
-        if uploaded_file.name.lower().endswith(".csv"):
-            return pd.read_csv(uploaded_file)
-        return pd.read_excel(uploaded_file)
-    return pd.read_csv(default_path)
 
 
 def durum_style(durum: str) -> str:
@@ -119,14 +112,64 @@ with st.sidebar:
         )
 
 # --- Veri yükle ---
-try:
-    if kaynak == "Dosya yükle (CSV / Excel)" and uploaded_file is not None:
-        df_raw = load_dataframe(uploaded_file, default_data_path)
-    else:
+if kaynak == "Dosya yükle (CSV / Excel)" and uploaded_file is not None:
+    try:
+        df_ham = data_mapper.read_table(uploaded_file)
+    except Exception as e:
+        st.error(f"Dosya okunamadı: {e}")
+        st.stop()
+
+    # --- Kolon Eşleştirme ---
+    st.subheader("🔗 Kolon Eşleştirme")
+    st.caption(
+        "Fintables'tan indirdiğiniz/kopyaladığınız dosyanın kolon adları "
+        "Johnny'nin standart kolonlarıyla birebir aynı olmak zorunda "
+        "değil. Aşağıda otomatik önerilen eşleştirmeyi kontrol edip "
+        "gerekirse düzeltin."
+    )
+
+    with st.expander("📄 Dosyanızdaki kolonlar", expanded=False):
+        st.write(list(df_ham.columns))
+
+    dosya_anahtari = f"{uploaded_file.name}_{uploaded_file.size}"
+    oneri = data_mapper.suggest_mapping(df_ham.columns)
+
+    BOS_SECENEK = "(boş bırak)"
+    secenekler = [BOS_SECENEK] + list(df_ham.columns)
+
+    mapping = {}
+    map_cols = st.columns(3)
+    for i, johnny_col in enumerate(data_mapper.STANDARD_COLUMNS):
+        zorunlu = johnny_col in REQUIRED_COLUMNS
+        onerilen = oneri.get(johnny_col)
+        varsayilan_index = secenekler.index(onerilen) if onerilen in secenekler else 0
+        etiket = f"{johnny_col}{' *' if zorunlu else ' (opsiyonel)'}"
+        with map_cols[i % 3]:
+            secim = st.selectbox(
+                etiket,
+                secenekler,
+                index=varsayilan_index,
+                key=f"map_{dosya_anahtari}_{johnny_col}",
+            )
+        mapping[johnny_col] = None if secim == BOS_SECENEK else secim
+
+    eksikler = data_mapper.missing_required_columns(mapping, REQUIRED_COLUMNS)
+    if eksikler:
+        st.error(
+            "Eşleştirilmemiş zorunlu kolonlar var, devam etmeden önce "
+            f"yukarıdan seçin: {', '.join(eksikler)}"
+        )
+        st.stop()
+
+    st.success("Tüm zorunlu kolonlar eşleştirildi.")
+    df_raw = data_mapper.apply_mapping(df_ham, mapping)
+    st.divider()
+else:
+    try:
         df_raw = pd.read_csv(default_data_path)
-except Exception as e:
-    st.error(f"Veri okunamadı: {e}")
-    st.stop()
+    except Exception as e:
+        st.error(f"Veri okunamadı: {e}")
+        st.stop()
 
 if sadece_watchlist:
     watchlist = [t.upper() for t in config.get("watchlist", [])]
@@ -141,7 +184,7 @@ try:
     sonuc = score_dataframe(df_raw, config)
 except ValueError as e:
     st.error(str(e))
-    st.info(f"Gerekli kolonlar: {', '.join(REQUIRED_COLUMNS)} (opsiyonel: gerekce_notu, yeni_is_iliskisi)")
+    st.info(f"Gerekli kolonlar: {', '.join(REQUIRED_COLUMNS)} (opsiyonel: gerekce_notu, {', '.join(OPTIONAL_COLUMNS)})")
     st.stop()
 
 # --- Top 3 ---
