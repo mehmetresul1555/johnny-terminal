@@ -1,7 +1,19 @@
 """
-Johnny Score v1
+Johnny Score v2
 -----------------
 BIST günlük trade karar destek sistemi için skorlama motoru.
+
+v2 ile birlikte alt skorlar artık CSV'den hazır olarak okunmuyor; ham
+teknik/temel göstergelerden üç ayrı motor tarafından hesaplanıyor:
+
+    scoring/technical_engine.py    -> Teknik skor      (max 30)
+    scoring/momentum_engine.py     -> Momentum skor     (max 20)
+    scoring/fundamental_engine.py  -> Bilanço/Temel skor (max 20)
+
+Geri kalan üç alt skor CSV'de doğrudan puan olarak verilir:
+    haber_puani        -> Haber/KAP/Katalizör skoru      (max 10)
+    kurumsal_puani      -> Kurumsal beklenti skoru        (max 10)
+    piyasa_rejimi       -> Piyasa rejimi skoru            (max 10)
 
 Toplam 100 puan üzerinden 6 alt skor:
 - teknik_skor        (max 30)
@@ -22,11 +34,15 @@ Risk kuralları:
 - Hedef 2 minimum %3
 
 Bu modül, veri kaynağı ne olursa olsun (CSV/Excel bugün, Fintables yarın)
-aynı skorlama sözleşmesini kullanır: girdi olarak alt skorları, fiyatı ve
-(varsa) ATR yüzdesini içeren bir DataFrame bekler.
+aynı skorlama sözleşmesini kullanır: girdi olarak ham göstergeleri, fiyatı
+ve (varsa) ATR yüzdesini içeren bir DataFrame bekler. Eski v1 mimarisinin
+dış davranışı (score_dataframe çıktı kolonları, eşikler, risk kuralları)
+değişmedi; sadece alt skorların nasıl üretildiği değişti.
 """
 
 import pandas as pd
+
+from scoring import fundamental_engine, momentum_engine, technical_engine
 
 # Her alt skorun üstünden geçemeyeceği maksimum değer
 SUB_SCORE_MAX = {
@@ -38,8 +54,16 @@ SUB_SCORE_MAX = {
     "piyasa_rejimi_skor": 10,
 }
 
-# Skorlama için zorunlu kolonlar (atr_pct ve gerekce_notu opsiyoneldir)
-REQUIRED_COLUMNS = ["hisse", "fiyat"] + list(SUB_SCORE_MAX.keys())
+# Skorlama için zorunlu ham kolonlar (hepsi CSV'de bulunmalı)
+REQUIRED_COLUMNS = (
+    ["hisse", "fiyat"]
+    + technical_engine.REQUIRED_COLUMNS
+    + momentum_engine.REQUIRED_COLUMNS
+    + fundamental_engine.REQUIRED_COLUMNS
+    + ["haber_puani", "kurumsal_puani", "piyasa_rejimi"]
+)
+# Yinelenen kolonları (örn. fiyat/atr_pct/ema20 birden fazla motor kullanabilir) temizle
+REQUIRED_COLUMNS = list(dict.fromkeys(REQUIRED_COLUMNS))
 
 LABELS = {
     "teknik_skor": "Teknik",
@@ -62,18 +86,36 @@ def _clip(value, max_value):
 
 
 def compute_total_score(row):
-    """Alt skorları sınırlar içine çekip toplam Johnny Score'u hesaplar.
+    """Üç motoru (teknik/momentum/bilanço) ve CSV'deki doğrudan puanları
+    (haber/kurumsal/piyasa rejimi) birleştirip toplam Johnny Score'u
+    hesaplar.
 
     Returns:
-        (total_score: float, clipped_scores: dict)
+        (total_score: float, clipped_scores: dict, engine_detail: dict)
     """
-    total = 0.0
-    clipped = {}
-    for col, max_val in SUB_SCORE_MAX.items():
-        v = _clip(row.get(col, 0), max_val)
-        clipped[col] = v
-        total += v
-    return round(total, 1), clipped
+    teknik_skor, teknik_detay = technical_engine.compute_technical_score(row)
+    momentum_skor, momentum_detay = momentum_engine.compute_momentum_score(row)
+    bilanco_skor, bilanco_detay = fundamental_engine.compute_fundamental_score(row)
+
+    haber_skor = _clip(row.get("haber_puani", 0), SUB_SCORE_MAX["haber_skor"])
+    kurumsal_skor = _clip(row.get("kurumsal_puani", 0), SUB_SCORE_MAX["kurumsal_skor"])
+    piyasa_skor = _clip(row.get("piyasa_rejimi", 0), SUB_SCORE_MAX["piyasa_rejimi_skor"])
+
+    clipped = {
+        "teknik_skor": teknik_skor,
+        "momentum_skor": momentum_skor,
+        "bilanco_skor": bilanco_skor,
+        "haber_skor": haber_skor,
+        "kurumsal_skor": kurumsal_skor,
+        "piyasa_rejimi_skor": piyasa_skor,
+    }
+    engine_detail = {
+        "teknik": teknik_detay,
+        "momentum": momentum_detay,
+        "bilanco": bilanco_detay,
+    }
+    total = round(sum(clipped.values()), 1)
+    return total, clipped, engine_detail
 
 
 def determine_durum(total_score, thresholds):
@@ -160,9 +202,10 @@ def score_dataframe(df, config):
     """Ham veriden (CSV/Excel/ileride Fintables) Johnny Terminal çıktı
     tablosunu üretir.
 
-    df kolonları: hisse, fiyat, teknik_skor, momentum_skor, bilanco_skor,
-                  haber_skor, kurumsal_skor, piyasa_rejimi_skor,
-                  [atr_pct], [gerekce_notu]
+    df kolonları (bkz. REQUIRED_COLUMNS): hisse, fiyat, rsi, macd_signal,
+                  ema20, ema50, ema200, adx, atr_pct, volume_ratio, fk,
+                  pddd, roe, net_borc_favok, haber_puani, kurumsal_puani,
+                  piyasa_rejimi
 
     Returns:
         pd.DataFrame  (Johnny Score'a göre azalan sırada), kolonlar:
@@ -178,7 +221,7 @@ def score_dataframe(df, config):
 
     rows = []
     for _, row in df.iterrows():
-        total, clipped = compute_total_score(row)
+        total, clipped, _engine_detail = compute_total_score(row)
         durum = determine_durum(total, thresholds)
 
         atr_pct = row.get("atr_pct", None)

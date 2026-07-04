@@ -1,6 +1,6 @@
 # Johnny Terminal
 
-BIST günlük trade karar destek sistemi (MVP v0.1).
+BIST günlük trade karar destek sistemi (v0.2).
 
 Bu araç **otomatik emir göndermez**. Her sabah BIST hisseleri arasından en iyi
 3 trade adayını bulup her biri için alım aralığı, stop, hedef 1, hedef 2 ve
@@ -36,37 +36,52 @@ Masaüstünden çift tıklayarak açmak isterseniz, proje klasöründeki
 ## Veri kaynağı ve CSV kolonları
 
 Uygulama varsayılan olarak `data/sample_data.csv` dosyasını okur. Sol
-menüden kendi CSV/Excel dosyanızı da yükleyebilirsiniz. Dosyanın aşağıdaki
-kolonları içermesi gerekir:
+menüden kendi CSV/Excel dosyanızı da yükleyebilirsiniz.
+
+v0.2 ile birlikte hazır alt skorlar (`teknik_skor` vb.) yerine **ham
+gösterge verileri** kullanılıyor; Johnny bu skorları kendi hesaplıyor.
+Dosyanın aşağıdaki kolonları içermesi gerekir:
 
 | Kolon | Zorunlu mu | Açıklama |
 |---|---|---|
 | `hisse` | Evet | Hisse kodu (örn. THYAO) |
 | `fiyat` | Evet | Güncel fiyat |
-| `teknik_skor` | Evet | Teknik analiz alt skoru (0-30) |
-| `momentum_skor` | Evet | Momentum alt skoru (0-20) |
-| `bilanco_skor` | Evet | Bilanço/temel alt skor (0-20) |
-| `haber_skor` | Evet | Haber/KAP/katalizör alt skoru (0-10) |
-| `kurumsal_skor` | Evet | Kurumsal beklenti alt skoru (0-10) |
-| `piyasa_rejimi_skor` | Evet | Piyasa rejimi alt skoru (0-10) |
-| `atr_pct` | Opsiyonel | Günlük ATR'nin fiyata oranı (%). Verilmezse %1.5 varsayılır |
-| `gerekce_notu` | Opsiyonel | Analistin serbest metin notu (otomatik gerekçeye eklenir) |
+| `rsi` | Evet | RSI (14) değeri |
+| `macd_signal` | Evet | MACD - sinyal farkı (histogram); pozitif/negatif |
+| `ema20` | Evet | 20 günlük EMA |
+| `ema50` | Evet | 50 günlük EMA |
+| `ema200` | Evet | 200 günlük EMA |
+| `adx` | Evet | ADX (trend gücü) |
+| `atr_pct` | Evet | Günlük ATR'nin fiyata oranı (%) |
+| `volume_ratio` | Evet | Güncel hacim / ortalama hacim oranı |
+| `fk` | Evet | Fiyat/Kazanç oranı |
+| `pddd` | Evet | Piyasa Değeri/Defter Değeri oranı |
+| `roe` | Evet | Özkaynak karlılığı (%) |
+| `net_borc_favok` | Evet | Net Borç/FAVÖK (kaldıraç çarpanı) |
+| `haber_puani` | Evet | Haber/KAP/katalizör puanı (0-10, elle veya Fintables'tan) |
+| `kurumsal_puani` | Evet | Kurumsal beklenti puanı (0-10) |
+| `piyasa_rejimi` | Evet | Piyasa rejimi puanı (0-10) |
 
 Alt skorlar kendi maksimum değerlerinin üzerine çıkarsa otomatik olarak
-sınırlanır (clip edilir); eksik/bozuk veri 0 kabul edilir.
+sınırlanır (clip edilir); eksik/bozuk veri güvenli varsayılanlarla (0 veya
+nötr bir değer) işlenir, uygulama çökmez.
 
 ## Johnny Score nedir?
 
 Johnny Score, bir hissenin günlük trade adayı olarak ne kadar güçlü
 olduğunu gösteren 0-100 arası bir puandır. Altı alt skorun toplamından
-oluşur:
+oluşur. İlk üçü ham göstergelerden ayrı birer "motor" tarafından
+hesaplanır, son üçü CSV'de doğrudan puan olarak verilir:
 
-- **Teknik** — 30 puan
-- **Momentum** — 20 puan
-- **Bilanço/Temel** — 20 puan
-- **Haber/KAP/Katalizör** — 10 puan
-- **Kurumsal beklenti** — 10 puan
-- **Piyasa rejimi** — 10 puan
+- **Teknik** — 30 puan (`scoring/technical_engine.py`) — RSI, EMA20/50/200
+  hizalanması, ADX, MACD
+- **Momentum** — 20 puan (`scoring/momentum_engine.py`) — hacim oranı, ATR,
+  fiyatın EMA20'ye göre momentumu
+- **Bilanço/Temel** — 20 puan (`scoring/fundamental_engine.py`) — F/K,
+  PD/DD, ROE, Net Borç/FAVÖK
+- **Haber/KAP/Katalizör** — 10 puan (`haber_puani` kolonundan doğrudan)
+- **Kurumsal beklenti** — 10 puan (`kurumsal_puani` kolonundan doğrudan)
+- **Piyasa rejimi** — 10 puan (`piyasa_rejimi` kolonundan doğrudan)
 
 Toplam skora göre durum ataması:
 
@@ -84,21 +99,23 @@ seviyeleri fiyat ile ATR yüzdesine göre hesaplanır ve şu kurallara uyar:
 UZAK DUR durumundaki hisseler için bu seviyeler hesaplanmaz (`-` gösterilir).
 
 Her satır için ayrıca en güçlü ve en zayıf alt skorlara bakılarak otomatik
-kısa bir gerekçe cümlesi üretilir; CSV'deki `gerekce_notu` doluysa bu not
-gerekçenin başına eklenir.
+kısa bir gerekçe cümlesi üretilir.
 
 ## Klasör yapısı
 
 ```
 johnny-terminal/
-├── app.py                  # Streamlit arayüzü
+├── app.py                        # Streamlit arayüzü
 ├── data/
-│   └── sample_data.csv     # Örnek veri
+│   └── sample_data.csv           # Örnek veri (ham göstergeler)
 ├── scoring/
-│   └── johnny_score.py     # Johnny Score v1 hesaplama motoru
+│   ├── johnny_score.py           # Johnny Score v2 - toplam skor, durum, risk seviyeleri
+│   ├── technical_engine.py       # Teknik skor motoru (30 puan)
+│   ├── momentum_engine.py        # Momentum skor motoru (20 puan)
+│   └── fundamental_engine.py     # Bilanço/temel skor motoru (20 puan)
 ├── config/
-│   └── watchlist.yaml      # Watchlist, eşikler, risk parametreleri
-├── outputs/                # Dışa aktarılan sonuç CSV'leri (git'e girmez)
+│   └── watchlist.yaml            # Watchlist, eşikler, risk parametreleri
+├── outputs/                      # Dışa aktarılan sonuç CSV'leri (git'e girmez)
 └── requirements.txt
 ```
 
