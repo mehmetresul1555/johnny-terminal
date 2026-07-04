@@ -1,6 +1,6 @@
 # Johnny Terminal
 
-BIST günlük trade karar destek sistemi (v0.2).
+BIST günlük trade karar destek sistemi (v0.3).
 
 Bu araç **otomatik emir göndermez**. Her sabah BIST hisseleri arasından en iyi
 3 trade adayını bulup her biri için alım aralığı, stop, hedef 1, hedef 2 ve
@@ -61,6 +61,7 @@ Dosyanın aşağıdaki kolonları içermesi gerekir:
 | `haber_puani` | Evet | Haber/KAP/katalizör puanı (0-10, elle veya Fintables'tan) |
 | `kurumsal_puani` | Evet | Kurumsal beklenti puanı (0-10) |
 | `piyasa_rejimi` | Evet | Piyasa rejimi puanı (0-10) |
+| `yeni_is_iliskisi` | Opsiyonel | Yeni bir iş ilişkisi/ortaklık var mı (1/0). Rule Engine'in R4 kuralı için kullanılır; yoksa 0 kabul edilir |
 
 Alt skorlar kendi maksimum değerlerinin üzerine çıkarsa otomatik olarak
 sınırlanır (clip edilir); eksik/bozuk veri güvenli varsayılanlarla (0 veya
@@ -68,10 +69,24 @@ nötr bir değer) işlenir, uygulama çökmez.
 
 ## Johnny Score nedir?
 
-Johnny Score, bir hissenin günlük trade adayı olarak ne kadar güçlü
-olduğunu gösteren 0-100 arası bir puandır. Altı alt skorun toplamından
-oluşur. İlk üçü ham göstergelerden ayrı birer "motor" tarafından
-hesaplanır, son üçü CSV'de doğrudan puan olarak verilir:
+v0.3 ile birlikte Johnny Score artık alt skorların düz (lineer) toplamı
+**değildir**. İki katmanlı çalışır:
+
+1. **Taban puan** — altı alt skorun toplamı, ama son skora tam ağırlığıyla
+   yansımaz; `config/watchlist.yaml` içindeki `scoring.base_damping`
+   katsayısıyla (varsayılan **0.6**) sıkıştırılır.
+2. **Kural motoru bonusu** (`scoring/rule_engine.py`) — göstergeler
+   arasındaki IF/THEN kombinasyonları (confluence) tetiklendiğinde sabit
+   bonus puan ekler. Asıl farklılaştırıcı puan artık buradan gelir: "her
+   şeyde ortalama iyi" ama hiçbir güçlü kombinasyonu yakalamayan bir hisse
+   ile birden fazla güçlü sinyali AYNI ANDA taşıyan bir hisse artık aynı
+   şekilde puanlanmaz.
+
+```
+Toplam = clip(taban_puan × base_damping + kural_bonusu, 0, 100)
+```
+
+Taban puanın altı bileşeni:
 
 - **Teknik** — 30 puan (`scoring/technical_engine.py`) — RSI, EMA20/50/200
   hizalanması, ADX, MACD
@@ -82,6 +97,18 @@ hesaplanır, son üçü CSV'de doğrudan puan olarak verilir:
 - **Haber/KAP/Katalizör** — 10 puan (`haber_puani` kolonundan doğrudan)
 - **Kurumsal beklenti** — 10 puan (`kurumsal_puani` kolonundan doğrudan)
 - **Piyasa rejimi** — 10 puan (`piyasa_rejimi` kolonundan doğrudan)
+
+### Rule Engine kuralları (`scoring/rule_engine.py`)
+
+| Kural | Koşul | Bonus |
+|---|---|---|
+| R1 | EMA20 > EMA50 > EMA200 + MACD pozitif + ADX > 25 | +10 |
+| R2 | RSI 55-65 + Hacim oranı > 1.5 | +8 |
+| R3 | ROE > %25 + Net Borç/FAVÖK < 2 | +8 |
+| R4 | Yeni iş ilişkisi + Kurumsal beklenti yüksek (≥8) | +7 |
+
+Yeni bir kural eklemek için `scoring/rule_engine.py` içindeki `RULES`
+listesine bir madde eklemek yeterlidir.
 
 Toplam skora göre durum ataması:
 
@@ -98,8 +125,10 @@ seviyeleri fiyat ile ATR yüzdesine göre hesaplanır ve şu kurallara uyar:
 
 UZAK DUR durumundaki hisseler için bu seviyeler hesaplanmaz (`-` gösterilir).
 
-Her satır için ayrıca en güçlü ve en zayıf alt skorlara bakılarak otomatik
-kısa bir gerekçe cümlesi üretilir.
+Her hisse için hem kısa bir gerekçe cümlesi hem de "Johnny neden bu puanı
+verdi?" başlıklı, madde madde (taban analiz + tetiklenen kurallar) detaylı
+bir açıklama üretilir; arayüzde Top 3 kartlarının altında ve tam tablonun
+altındaki genişletilebilir bölümde görüntülenir.
 
 ## Klasör yapısı
 
@@ -109,12 +138,13 @@ johnny-terminal/
 ├── data/
 │   └── sample_data.csv           # Örnek veri (ham göstergeler)
 ├── scoring/
-│   ├── johnny_score.py           # Johnny Score v2 - toplam skor, durum, risk seviyeleri
+│   ├── johnny_score.py           # Johnny Score v3 - taban puan + kural bonusu, durum, risk seviyeleri
 │   ├── technical_engine.py       # Teknik skor motoru (30 puan)
 │   ├── momentum_engine.py        # Momentum skor motoru (20 puan)
-│   └── fundamental_engine.py     # Bilanço/temel skor motoru (20 puan)
+│   ├── fundamental_engine.py     # Bilanço/temel skor motoru (20 puan)
+│   └── rule_engine.py            # IF/THEN kural motoru (confluence bonusları)
 ├── config/
-│   └── watchlist.yaml            # Watchlist, eşikler, risk parametreleri
+│   └── watchlist.yaml            # Watchlist, eşikler, risk ve skorlama parametreleri
 ├── outputs/                      # Dışa aktarılan sonuç CSV'leri (git'e girmez)
 └── requirements.txt
 ```

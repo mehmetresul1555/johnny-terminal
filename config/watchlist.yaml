@@ -29,6 +29,13 @@ risk:
   hedef2_min_pct: 3.0    # hedef 2 en az %3
   giris_bant_pct: 0.3    # alım aralığı genişliği (fiyatın +-%'si)
 
+# v0.3: Johnny Score artık lineer toplam değil. Taban puan (6 alt skorun
+# toplamı) bu katsayıyla sıkıştırılır; asıl farklılaştırıcı puan
+# scoring/rule_engine.py'deki IF/THEN kural bonuslarından gelir.
+# 1.0 = eski (v0.2) tam lineer davranış.
+scoring:
+  base_damping: 0.6
+
 # Varsayılan veri dosyası (app.py "Örnek veri" seçildiğinde bunu okur)
 data:
   default_file: "data/sample_data.csv"

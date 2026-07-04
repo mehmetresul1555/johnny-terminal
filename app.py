@@ -99,14 +99,23 @@ with st.sidebar:
 
     st.divider()
     st.caption(f"Tarih: {datetime.now().strftime('%d.%m.%Y')}")
-    with st.expander("Johnny Score v1 dağılımı"):
+    with st.expander("Johnny Score v3 nasıl hesaplanır?"):
         st.markdown(
+            "**Taban puan** (6 alt skor, motorlarca hesaplanır):\n"
             "- Teknik: 30\n"
             "- Momentum: 20\n"
             "- Bilanço/Temel: 20\n"
             "- Haber/KAP/Katalizör: 10\n"
             "- Kurumsal beklenti: 10\n"
-            "- Piyasa rejimi: 10"
+            "- Piyasa rejimi: 10\n\n"
+            f"Taban puan toplama işlemine göre değil, `base_damping` "
+            f"({config.get('scoring', {}).get('base_damping', 0.6)}) ile "
+            "sıkıştırılarak son skora katılır.\n\n"
+            "**Kural motoru bonusu** (scoring/rule_engine.py): birden "
+            "fazla sinyalin AYNI ANDA gerçekleşmesi (confluence) ekstra "
+            "puan kazandırır. Asıl farklılaştırıcı puan buradan gelir — "
+            "her hissenin kartındaki 'Johnny neden bu puanı verdi?' "
+            "bölümünden tetiklenen kuralları görebilirsiniz."
         )
 
 # --- Veri yükle ---
@@ -132,7 +141,7 @@ try:
     sonuc = score_dataframe(df_raw, config)
 except ValueError as e:
     st.error(str(e))
-    st.info(f"Gerekli kolonlar: {', '.join(REQUIRED_COLUMNS)} (opsiyonel: atr_pct, gerekce_notu)")
+    st.info(f"Gerekli kolonlar: {', '.join(REQUIRED_COLUMNS)} (opsiyonel: gerekce_notu, yeni_is_iliskisi)")
     st.stop()
 
 # --- Top 3 ---
@@ -149,12 +158,22 @@ for i, (_, row) in enumerate(top3.iterrows()):
         st.write(f"**Hedef 1:** {row['Hedef 1']}")
         st.write(f"**Hedef 2:** {row['Hedef 2']}")
         st.caption(row["Gerekçe"])
+        with st.expander("🔍 Johnny neden bu puanı verdi?"):
+            st.markdown(row["Neden"])
 
 st.divider()
 
 # --- Tam tablo ---
 st.subheader("📋 Tüm Adaylar")
-st.dataframe(style_table(sonuc), use_container_width=True, hide_index=True)
+tablo_kolonlari = ["Hisse", "Fiyat", "Johnny Score", "Durum", "Alım Aralığı", "Stop", "Hedef 1", "Hedef 2", "Gerekçe"]
+st.dataframe(style_table(sonuc[tablo_kolonlari]), use_container_width=True, hide_index=True)
+
+# --- Madde madde detaylı gerekçeler (tüm hisseler) ---
+with st.expander("🔍 Tüm hisseler için 'Johnny neden bu puanı verdi?' detayları"):
+    for _, row in sonuc.iterrows():
+        st.markdown(f"**{row['Hisse']} — {row['Johnny Score']:.0f} puan ({row['Durum']})**")
+        st.markdown(row["Neden"])
+        st.markdown("---")
 
 # --- Dışa aktar ---
 st.divider()

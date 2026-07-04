@@ -1,21 +1,38 @@
 """
-Johnny Score v2
+Johnny Score v3
 -----------------
 BIST günlük trade karar destek sistemi için skorlama motoru.
 
-v2 ile birlikte alt skorlar artık CSV'den hazır olarak okunmuyor; ham
-teknik/temel göstergelerden üç ayrı motor tarafından hesaplanıyor:
+v3 ile birlikte Johnny Score artık alt skorların DÜZ (lineer) toplamı
+DEĞİLDİR. Puanlama iki katmandan oluşur:
 
-    scoring/technical_engine.py    -> Teknik skor      (max 30)
-    scoring/momentum_engine.py     -> Momentum skor     (max 20)
+    1. Taban puan   -> teknik/momentum/bilanço motorları + haber/kurumsal/
+                        piyasa rejimi puanlarının toplamı, SUB_SCORE_MAX
+                        kadar hesaplanır ama son skora tam ağırlığıyla
+                        yansımaz; `scoring.base_damping` katsayısıyla
+                        sıkıştırılır (bkz. config/watchlist.yaml).
+    2. Kural bonusu -> scoring/rule_engine.py içindeki IF/THEN kuralları
+                        (confluence: birden fazla göstergenin AYNI ANDA
+                        sağlanması) tetiklenirse sabit bonus puan ekler.
+                        Asıl farklılaştırıcı puan artık buradan gelir;
+                        ortalama-iyi ama hiçbir kombinasyonu tam
+                        tetiklemeyen hisseler artık yüksek puan alamaz.
+
+    Toplam = clip(taban_puan * base_damping + kural_bonusu, 0, 100)
+
+Motorlar:
+    scoring/technical_engine.py    -> Teknik skor       (max 30)
+    scoring/momentum_engine.py     -> Momentum skor      (max 20)
     scoring/fundamental_engine.py  -> Bilanço/Temel skor (max 20)
+    scoring/rule_engine.py         -> IF/THEN kural bonusları
 
 Geri kalan üç alt skor CSV'de doğrudan puan olarak verilir:
-    haber_puani        -> Haber/KAP/Katalizör skoru      (max 10)
-    kurumsal_puani      -> Kurumsal beklenti skoru        (max 10)
-    piyasa_rejimi       -> Piyasa rejimi skoru            (max 10)
+    haber_puani         -> Haber/KAP/Katalizör skoru      (max 10)
+    kurumsal_puani      -> Kurumsal beklenti skoru         (max 10)
+    piyasa_rejimi       -> Piyasa rejimi skoru             (max 10)
 
-Toplam 100 puan üzerinden 6 alt skor:
+Taban puanın 6 bileşeni (toplamda 100 puana denk gelir, ama son skora
+damping uygulanmış haliyle katılır):
 - teknik_skor        (max 30)
 - momentum_skor      (max 20)
 - bilanco_skor       (max 20)   -> bilanço / temel
@@ -34,15 +51,14 @@ Risk kuralları:
 - Hedef 2 minimum %3
 
 Bu modül, veri kaynağı ne olursa olsun (CSV/Excel bugün, Fintables yarın)
-aynı skorlama sözleşmesini kullanır: girdi olarak ham göstergeleri, fiyatı
-ve (varsa) ATR yüzdesini içeren bir DataFrame bekler. Eski v1 mimarisinin
-dış davranışı (score_dataframe çıktı kolonları, eşikler, risk kuralları)
-değişmedi; sadece alt skorların nasıl üretildiği değişti.
+aynı skorlama sözleşmesini kullanır. Eski mimarinin dış davranışı
+(score_dataframe çıktı kolonları, eşikler, risk kuralları) değişmedi;
+sadece toplam skorun NASIL üretildiği değişti.
 """
 
 import pandas as pd
 
-from scoring import fundamental_engine, momentum_engine, technical_engine
+from scoring import fundamental_engine, momentum_engine, rule_engine, technical_engine
 
 # Her alt skorun üstünden geçemeyeceği maksimum değer
 SUB_SCORE_MAX = {
@@ -54,6 +70,10 @@ SUB_SCORE_MAX = {
     "piyasa_rejimi_skor": 10,
 }
 
+# Taban puanın son skora ne kadar ağırlıkla yansıyacağı (bkz. config
+# watchlist.yaml -> scoring.base_damping). 1.0 = eski (v2) lineer davranış.
+DEFAULT_BASE_DAMPING = 0.6
+
 # Skorlama için zorunlu ham kolonlar (hepsi CSV'de bulunmalı)
 REQUIRED_COLUMNS = (
     ["hisse", "fiyat"]
@@ -64,6 +84,9 @@ REQUIRED_COLUMNS = (
 )
 # Yinelenen kolonları (örn. fiyat/atr_pct/ema20 birden fazla motor kullanabilir) temizle
 REQUIRED_COLUMNS = list(dict.fromkeys(REQUIRED_COLUMNS))
+
+# Opsiyonel kolonlar: yoksa varsayılan (nötr/kapalı) değerle çalışılır
+OPTIONAL_COLUMNS = ["yeni_is_iliskisi"]
 
 LABELS = {
     "teknik_skor": "Teknik",
@@ -85,13 +108,25 @@ def _clip(value, max_value):
     return max(0.0, min(value, max_value))
 
 
-def compute_total_score(row):
-    """Üç motoru (teknik/momentum/bilanço) ve CSV'deki doğrudan puanları
-    (haber/kurumsal/piyasa rejimi) birleştirip toplam Johnny Score'u
-    hesaplar.
+def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
+    """Taban puan (üç motor + haber/kurumsal/piyasa) ile kural motoru
+    bonuslarını birleştirip toplam Johnny Score'u hesaplar.
+
+    Önemli: taban puan artık TEK BAŞINA final skor değildir. `base_damping`
+    ile sıkıştırılır; asıl farklılaştırıcı katkı rule_engine'den gelen
+    confluence bonuslarıdır. Böylece "her şeyde ortalama iyi" bir hisse ile
+    "birden fazla güçlü sinyali aynı anda taşıyan" bir hisse artık aynı
+    şekilde puanlanmaz.
 
     Returns:
-        (total_score: float, clipped_scores: dict, engine_detail: dict)
+        dict: {
+            "total": float,                # 0-100 final Johnny Score
+            "clipped": dict,                # 6 alt skor (taban, damping'siz)
+            "engine_detail": dict,          # motorların ayrıntılı kırılımı
+            "base_score": float,            # taban puan * base_damping
+            "rule_bonus": float,            # tetiklenen kuralların toplamı
+            "fired_rules": list[dict],      # tetiklenen kurallar (id/açıklama/puan)
+        }
     """
     teknik_skor, teknik_detay = technical_engine.compute_technical_score(row)
     momentum_skor, momentum_detay = momentum_engine.compute_momentum_score(row)
@@ -114,8 +149,22 @@ def compute_total_score(row):
         "momentum": momentum_detay,
         "bilanco": bilanco_detay,
     }
-    total = round(sum(clipped.values()), 1)
-    return total, clipped, engine_detail
+
+    taban_toplam = sum(clipped.values())
+    base_score = round(taban_toplam * base_damping, 1)
+
+    rule_bonus, fired_rules = rule_engine.evaluate_rules(row)
+
+    total = round(_clip(base_score + rule_bonus, 100), 1)
+
+    return {
+        "total": total,
+        "clipped": clipped,
+        "engine_detail": engine_detail,
+        "base_score": base_score,
+        "rule_bonus": rule_bonus,
+        "fired_rules": fired_rules,
+    }
 
 
 def determine_durum(total_score, thresholds):
@@ -198,6 +247,38 @@ def generate_gerekce(clipped_scores, analist_notu=None):
     return cumle
 
 
+def generate_reason_bullets(score_result):
+    """"Johnny bu hisseye neden bu puanı verdi?" sorusunun madde madde
+    cevabını üretir: önce taban puanın 6 bileşeni, ardından tetiklenen
+    kural bonusları.
+
+    Args:
+        score_result: compute_total_score(row) çıktısı (dict).
+
+    Returns:
+        list[str]: her biri bir madde (bullet) olacak metin listesi.
+    """
+    clipped = score_result["clipped"]
+    fired_rules = score_result["fired_rules"]
+    base_score = score_result["base_score"]
+    rule_bonus = score_result["rule_bonus"]
+
+    bullets = []
+    for key in ["teknik_skor", "momentum_skor", "bilanco_skor", "haber_skor", "kurumsal_skor", "piyasa_rejimi_skor"]:
+        bullets.append(f"{LABELS[key]}: {clipped[key]:.0f}/{SUB_SCORE_MAX[key]} puan (taban analiz)")
+
+    bullets.append(f"Taban puan (damping uygulanmış): {base_score:.1f} puan")
+
+    if fired_rules:
+        for r in fired_rules:
+            bullets.append(f"Kural {r['id']} tetiklendi: {r['aciklama']} → +{r['puan']:.0f} bonus puan")
+    else:
+        bullets.append("Hiçbir bonus kural tetiklenmedi (güçlü bir sinyal kombinasyonu yakalanmadı).")
+
+    bullets.append(f"Toplam kural bonusu: +{rule_bonus:.1f} puan")
+    return bullets
+
+
 def score_dataframe(df, config):
     """Ham veriden (CSV/Excel/ileride Fintables) Johnny Terminal çıktı
     tablosunu üretir.
@@ -210,10 +291,11 @@ def score_dataframe(df, config):
     Returns:
         pd.DataFrame  (Johnny Score'a göre azalan sırada), kolonlar:
         Hisse, Fiyat, Johnny Score, Durum, Alım Aralığı, Stop, Hedef 1,
-        Hedef 2, Gerekçe
+        Hedef 2, Gerekçe, Neden (madde madde detaylı gerekçe metni)
     """
     thresholds = config.get("thresholds", {"al": 85, "izle": 70})
     risk_cfg = config.get("risk", {})
+    base_damping = config.get("scoring", {}).get("base_damping", DEFAULT_BASE_DAMPING)
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
@@ -221,12 +303,16 @@ def score_dataframe(df, config):
 
     rows = []
     for _, row in df.iterrows():
-        total, clipped, _engine_detail = compute_total_score(row)
+        score_result = compute_total_score(row, base_damping=base_damping)
+        total = score_result["total"]
+        clipped = score_result["clipped"]
         durum = determine_durum(total, thresholds)
 
         atr_pct = row.get("atr_pct", None)
         analist_notu = row.get("gerekce_notu", None)
         gerekce = generate_gerekce(clipped, analist_notu)
+        neden_maddeleri = generate_reason_bullets(score_result)
+        neden_metin = "\n".join(f"- {madde}" for madde in neden_maddeleri)
 
         if durum == "UZAK DUR":
             alim_araligi = "-"
@@ -250,6 +336,7 @@ def score_dataframe(df, config):
             "Hedef 1": hedef1_txt,
             "Hedef 2": hedef2_txt,
             "Gerekçe": gerekce,
+            "Neden": neden_metin,
         })
 
     result = pd.DataFrame(rows)
