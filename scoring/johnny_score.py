@@ -1,34 +1,34 @@
 """
 Johnny Score v1
 -----------------
-BIST gunluk trade karar destek sistemi icin skorlama motoru.
+BIST günlük trade karar destek sistemi için skorlama motoru.
 
-Toplam 100 puan uzerinden 6 alt skor:
+Toplam 100 puan üzerinden 6 alt skor:
 - teknik_skor        (max 30)
 - momentum_skor      (max 20)
-- bilanco_skor       (max 20)   -> bilanco / temel
-- haber_skor         (max 10)   -> haber / KAP / katalizor
+- bilanco_skor       (max 20)   -> bilanço / temel
+- haber_skor         (max 10)   -> haber / KAP / katalizör
 - kurumsal_skor      (max 10)   -> kurumsal beklenti (analist/hedef fiyat vb.)
 - piyasa_rejimi_skor (max 10)
 
-Durum kurallari:
+Durum kuralları:
 - 85+           -> AL
-- 70-84         -> IZLE
-- 70 alti       -> UZAK DUR
+- 70-84         -> İZLE
+- 70 altı       -> UZAK DUR
 
-Risk kurallari:
+Risk kuralları:
 - Stop mesafesi maksimum %2
 - Hedef 1 minimum %1.5
 - Hedef 2 minimum %3
 
-Bu modul, veri kaynagi ne olursa olsun (CSV/Excel bugun, Fintables yarin)
-ayni skorlama sozlesmesini kullanir: girdi olarak alt skorlari, fiyati ve
-(varsa) ATR yuzdesini icken bir DataFrame bekler.
+Bu modül, veri kaynağı ne olursa olsun (CSV/Excel bugün, Fintables yarın)
+aynı skorlama sözleşmesini kullanır: girdi olarak alt skorları, fiyatı ve
+(varsa) ATR yüzdesini içeren bir DataFrame bekler.
 """
 
 import pandas as pd
 
-# Her alt skorun ustunden gecemeyecegi maksimum deger
+# Her alt skorun üstünden geçemeyeceği maksimum değer
 SUB_SCORE_MAX = {
     "teknik_skor": 30,
     "momentum_skor": 20,
@@ -38,7 +38,7 @@ SUB_SCORE_MAX = {
     "piyasa_rejimi_skor": 10,
 }
 
-# Skorlama icin zorunlu kolonlar (atr_pct ve gerekce_notu opsiyoneldir)
+# Skorlama için zorunlu kolonlar (atr_pct ve gerekce_notu opsiyoneldir)
 REQUIRED_COLUMNS = ["hisse", "fiyat"] + list(SUB_SCORE_MAX.keys())
 
 LABELS = {
@@ -52,8 +52,8 @@ LABELS = {
 
 
 def _clip(value, max_value):
-    """Bir alt skoru 0 ile max_value arasina sikistirir. Bozuk/eksik veri
-    icin 0 dondurur (sistemi kirmamak icin)."""
+    """Bir alt skoru 0 ile max_value arasına sıkıştırır. Bozuk/eksik veri
+    için 0 döndürür (sistemi kırmamak için)."""
     try:
         value = float(value)
     except (TypeError, ValueError):
@@ -62,7 +62,7 @@ def _clip(value, max_value):
 
 
 def compute_total_score(row):
-    """Alt skorlari sinirlar icine cekip toplam Johnny Score'u hesaplar.
+    """Alt skorları sınırlar içine çekip toplam Johnny Score'u hesaplar.
 
     Returns:
         (total_score: float, clipped_scores: dict)
@@ -77,7 +77,7 @@ def compute_total_score(row):
 
 
 def determine_durum(total_score, thresholds):
-    """Toplam skora gore AL / IZLE / UZAK DUR karari verir."""
+    """Toplam skora göre AL / İZLE / UZAK DUR kararı verir."""
     al_esik = thresholds.get("al", 85)
     izle_esik = thresholds.get("izle", 70)
     if total_score >= al_esik:
@@ -88,15 +88,15 @@ def determine_durum(total_score, thresholds):
 
 
 def compute_trade_levels(fiyat, atr_pct, risk_cfg):
-    """Alim araligi, stop, hedef1 ve hedef2 seviyelerini hesaplar.
+    """Alım aralığı, stop, hedef1 ve hedef2 seviyelerini hesaplar.
 
     Kurallar (config/watchlist.yaml -> risk):
-        - stop mesafesi <= stop_max_pct (varsayilan %2)
-        - hedef1 >= hedef1_min_pct     (varsayilan %1.5)
-        - hedef2 >= hedef2_min_pct     (varsayilan %3)
+        - stop mesafesi <= stop_max_pct (varsayılan %2)
+        - hedef1 >= hedef1_min_pct     (varsayılan %1.5)
+        - hedef2 >= hedef2_min_pct     (varsayılan %3)
 
-    atr_pct verilmemis/gecersizse gunluk trade icin makul bir varsayim
-    (yuzde 1.5 volatilite) kullanilir.
+    atr_pct verilmemiş/geçersizse günlük trade için makul bir varsayım
+    (yüzde 1.5 volatilite) kullanılır.
     """
     fiyat = float(fiyat)
     try:
@@ -134,9 +134,9 @@ def compute_trade_levels(fiyat, atr_pct, risk_cfg):
 
 
 def generate_gerekce(clipped_scores, analist_notu=None):
-    """Alt skorlarin dagilimina bakarak otomatik kisa bir gerekce cumlesi
-    uretir. Varsa analistin (CSV'deki gerekce_notu kolonu) elle girdigi
-    not basa eklenir."""
+    """Alt skorların dağılımına bakarak otomatik kısa bir gerekçe cümlesi
+    üretir. Varsa analistin (CSV'deki gerekce_notu kolonu) elle girdiği
+    not başa eklenir."""
     ratios = {k: (v / SUB_SCORE_MAX[k]) for k, v in clipped_scores.items()}
     ranked = sorted(ratios.items(), key=lambda x: x[1], reverse=True)
     guclu = ranked[:2]
@@ -157,15 +157,15 @@ def generate_gerekce(clipped_scores, analist_notu=None):
 
 
 def score_dataframe(df, config):
-    """Ham veriden (CSV/Excel/ileride Fintables) Johnny Terminal cikti
-    tablosunu uretir.
+    """Ham veriden (CSV/Excel/ileride Fintables) Johnny Terminal çıktı
+    tablosunu üretir.
 
-    df kolonlari: hisse, fiyat, teknik_skor, momentum_skor, bilanco_skor,
+    df kolonları: hisse, fiyat, teknik_skor, momentum_skor, bilanco_skor,
                   haber_skor, kurumsal_skor, piyasa_rejimi_skor,
                   [atr_pct], [gerekce_notu]
 
     Returns:
-        pd.DataFrame  (Johnny Score'a gore azalan sirada), kolonlar:
+        pd.DataFrame  (Johnny Score'a göre azalan sırada), kolonlar:
         Hisse, Fiyat, Johnny Score, Durum, Alım Aralığı, Stop, Hedef 1,
         Hedef 2, Gerekçe
     """

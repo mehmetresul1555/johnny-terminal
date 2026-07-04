@@ -1,11 +1,11 @@
 """
-Johnny Terminal - BIST Gunluk Trade Karar Destek Sistemi (MVP)
+Johnny Terminal - BIST Günlük Trade Karar Destek Sistemi (MVP)
 
-Calistirmak icin:
+Çalıştırmak için:
     pip install -r requirements.txt
     streamlit run app.py
 
-Bu arac otomatik emir GONDERMEZ. Sadece analiz / karar destegi sunar.
+Bu araç otomatik emir GÖNDERMEZ. Sadece analiz / karar desteği sunar.
 """
 
 import sys

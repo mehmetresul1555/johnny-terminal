@@ -1,8 +1,8 @@
 # Johnny Terminal - izleme listesi ve parametreler
-# Bu dosya kod degil, sadece ayar dosyasidir. Degerleri istediginiz gibi
-# degistirebilirsiniz.
+# Bu dosya kod değil, sadece ayar dosyasıdır. Değerleri istediğiniz gibi
+# değiştirebilirsiniz.
 
-# Takip edilen BIST hisseleri (sidebar'daki "sadece watchlist" filtresi icin)
+# Takip edilen BIST hisseleri (sidebar'daki "sadece watchlist" filtresi için)
 watchlist:
   - THYAO
   - SASA
@@ -17,24 +17,24 @@ watchlist:
   - KRDMD
   - YKBNK
 
-# Johnny Score esikleri
+# Johnny Score eşikleri
 thresholds:
-  al: 85      # bu puan ve uzeri -> AL
-  izle: 70    # bu puan ve 'al' esigi arasi -> IZLE, altinda -> UZAK DUR
+  al: 85      # bu puan ve üzeri -> AL
+  izle: 70    # bu puan ve 'al' eşiği arası -> İZLE, altında -> UZAK DUR
 
-# Gunluk trade risk parametreleri
+# Günlük trade risk parametreleri
 risk:
   stop_max_pct: 2.0      # stop mesafesi en fazla %2
   hedef1_min_pct: 1.5    # hedef 1 en az %1.5
   hedef2_min_pct: 3.0    # hedef 2 en az %3
-  giris_bant_pct: 0.3    # alim araligi genisligi (fiyatin +-%'si)
+  giris_bant_pct: 0.3    # alım aralığı genişliği (fiyatın +-%'si)
 
-# Varsayilan veri dosyasi (app.py "Ornek veri" secildiginde bunu okur)
+# Varsayılan veri dosyası (app.py "Örnek veri" seçildiğinde bunu okur)
 data:
   default_file: "data/sample_data.csv"
 
-# Ileride eklenecek Fintables entegrasyonu icin yer tutucu.
-# MVP asamasinda kullanilmiyor; sadece arayuzde bilgi amacli gosteriliyor.
+# İleride eklenecek Fintables entegrasyonu için yer tutucu.
+# MVP aşamasında kullanılmıyor; sadece arayüzde bilgi amaçlı gösteriliyor.
 fintables:
   enabled: false
-  note: "Fintables Pro tablolarindan manuel/yari otomatik veri aktarimi ve ileride browser automation ile otomatik cekim planlaniyor."
+  note: "Fintables Pro tablolarından manuel/yarı otomatik veri aktarımı ve ileride browser automation ile otomatik çekim planlanıyor."
