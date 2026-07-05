@@ -965,6 +965,39 @@ def _radar_sayfasindan_df_olustur(
     ):
         basliklar[hisse_kolon_index] = "Hisse"
 
+    # BUG FIX (canlı testte bulundu - GSDDE'nin gösterilen Fiyat'ı 267
+    # çıktı, gerçek fiyatı ~15,82 TL'ydi): "Hisse" kolonu yukarıda adı
+    # tanınabilir değilse yeniden adlandırılıyordu, AMA Fiyat/Hacim/Gün %
+    # kolonları için aynı şey yapılmıyordu - bu yüzden thead sadece '#'
+    # ve boş bir başlık sağladığında (canlı testte tam olarak bu oldu)
+    # bu kolonlar "Kolon_N" olarak KALIYOR, data_mapper.suggest_mapping
+    # bunları isimden asla bulamıyor ve (ayrı bir bug nedeniyle, bkz.
+    # data_mapper.py) yanlışlıkla '#' (sıra numarası) kolonuna
+    # eşleşiyordu. Artık bilinen SABİT 13 kolonlu Radar düzenine göre
+    # (bkz. scoring/pre_screen.RADAR_POZISYONEL_INDEKS) Fiyat/Hacim/
+    # Gün % kolonları da - SADECE adları hâlâ otomatik üretilmişse
+    # ('Kolon_N' ya da boş) - gerçek isimleriyle yeniden adlandırılır;
+    # böylece data_mapper hem isimden doğru kolonu bulur hem de '#'
+    # kolonuna asla yanlışlıkla eşleşmez.
+    from scoring.pre_screen import (
+        RADAR_POZISYONEL_INDEKS as _RADAR_POZISYONEL_INDEKS,
+        RADAR_POZISYONEL_TOPLAM_KOLON as _RADAR_POZISYONEL_TOPLAM_KOLON,
+        _isim_otomatik_uretilmis_mi as _isim_otomatik_uretilmis_mi_kontrol,
+    )
+
+    _POZISYONEL_GERCEK_ISIM = {"fiyat": "Fiyat", "gun": "Gün %", "hacim": "Hacim"}
+    if len(basliklar) == _RADAR_POZISYONEL_TOPLAM_KOLON:
+        for _anahtar, _idx in _RADAR_POZISYONEL_INDEKS.items():
+            _gercek_isim = _POZISYONEL_GERCEK_ISIM.get(_anahtar)
+            if (
+                _gercek_isim
+                and _idx < len(basliklar)
+                and _idx != hisse_kolon_index
+                and _isim_otomatik_uretilmis_mi_kontrol(basliklar[_idx])
+                and _gercek_isim not in basliklar
+            ):
+                basliklar[_idx] = _gercek_isim
+
     return pd.DataFrame(veri_satirlari, columns=basliklar)
 
 

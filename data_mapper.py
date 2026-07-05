@@ -194,6 +194,34 @@ def suggest_mapping(source_columns):
             used_sources.add(eslesme)
 
     # 2. geçiş: eşleşmeyenler için içerme (substring) bazlı esnek arama
+    #
+    # BUG FIX (canlı testte bulundu - GSDDE'nin "Fiyat"ı 267 gösterdi,
+    # gerçek fiyatı ~15,82 TL'ydi): Fintables Radar'ın thead'i bazen
+    # sadece '#' ve boş bir başlık sağlıyor (bkz. integrations/
+    # fintables_browser.py şema tespiti); bu durumda gerçek Fiyat/Hacim/
+    # Gün kolonları isimlendirilmeden "Kolon_N" kalabiliyordu (artık
+    # fintables_browser bunları POZİSYONA göre "Fiyat"/"Hacim"/"Gün %"
+    # olarak yeniden adlandırıyor - bkz. _radar_sayfasindan_df_olustur).
+    # AMA bu ikinci savunma hattı da önemli: '#' gibi bir kolon adı
+    # normalize edilince BOŞ STRING olur (_normalize yalnızca a-z/0-9
+    # bırakır) ve Python'da `"" in herhangi_bir_string` HER ZAMAN True
+    # döner - bu yüzden boş normalize'li HERHANGİ bir kolon, aranan ilk
+    # standart Johnny kolonuna (o an 'fiyat' ise ona) YANLIŞLIKLA
+    # eşleşiyordu; '#' aslında Radar'ın sıra numarası, gerçek bir fiyat
+    # DEĞİL. Artık normalize edilince boş kalan (yani tamamen
+    # alfanümerik olmayan karakterlerden oluşan, örn. '#') kolon adları
+    # substring eşleşmesine hiç aday OLARAK ALINMIYOR.
+    #
+    # İKİNCİ BUG (aynı testte, aynı kök nedenle bulundu): kısa/genel bir
+    # kolon adı da (örn. "Gün %" -> normalize "gun", 3 karakter) uzun bir
+    # alias içinde tesadüfen GEÇEN bir alt dize olarak yanlışlıkla
+    # eşleşebiliyordu - örn. "gun", "20 günlük ema" alias'ının normalize
+    # hali "20gunlukema" içinde geçtiği için "ema20" standart kolonu
+    # yanlışlıkla "Gün %" kolonuna eşleşiyordu. Bu yüzden substring
+    # eşleşmesi için kolon adının normalize hali de en az 4 karakter
+    # olmalı (çok kısa/genel kelimelerle riskli substring eşleşmesi
+    # engellenir); daha kısa kolon adları sadece TAM (1. geçiş) eşleşme
+    # ile eşlenebilir.
     for johnny_col in STANDARD_COLUMNS:
         if suggestion[johnny_col]:
             continue
@@ -205,6 +233,8 @@ def suggest_mapping(source_columns):
             for norm_col, orig_col in normalized_lookup.items():
                 if orig_col in used_sources:
                     continue
+                if len(norm_col) < 4:
+                    continue  # boş ('#') ya da çok kısa/genel adlar asla eşleşmemeli
                 if norm_alias in norm_col or norm_col in norm_alias:
                     bulundu = orig_col
                     break
