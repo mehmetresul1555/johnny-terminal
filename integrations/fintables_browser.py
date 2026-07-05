@@ -632,6 +632,15 @@ def _radar_sayfasindan_df_olustur(
     # `gorulen_hisseler`e YAZILMAZ (yanlış şema ile veri kirletilmesin
     # diye) ama scroll/deneme normal şekilde devam eder.
     SEMA_TESPIT_MAX_DENEME = 15
+    # BUG FIX: SEMA_TESPIT_MAX_DENEME sabit bir iç sınırdır (15), ama
+    # dışarıdan verilen max_scroll_deneme (örn. testte veya küçük bir
+    # yapılandırmada) bundan DAHA KÜÇÜK olabilir. Böyle bir durumda dış
+    # döngü, şema hiç kesinleşmeden (SEMA_TESPIT_MAX_DENEME'e ulaşmadan)
+    # kendi sınırında dururdu ve şema SONSUZA KADAR belirsiz kalırdı -
+    # bu da "hiç veri satırı yok" hatasına yol açardı (best-effort
+    # ilkesine aykırı). Artık şemanın "son çare" ile kesinleştirileceği
+    # tur sayısı, iki sınırın küçüğü olarak belirlenir.
+    _sema_azami_tur = min(SEMA_TESPIT_MAX_DENEME, max_scroll_deneme)
 
     gorulen_hisseler = {}
     toplam_okunan_satir = 0
@@ -698,28 +707,36 @@ def _radar_sayfasindan_df_olustur(
             # BİRİKTİRİLİR (`extend`); aday kolon sayısı DEĞİŞİRSE
             # (farklı bir şemaya geçildiyse) birikim sıfırlanıp yeniden
             # başlar.
-            if len(bu_tur_hucreler) >= 3:
-                # BUG FIX (art arda canlı testlerde doğrulanan örüntü):
-                # yanlış kilitlenen kolon sayısı HER SEFERİNDE küçük bir
-                # sayı (1 ya da 2) çıktı, doğrusu HER SEFERİNDE 13 idi.
-                # Bu, Fintables'ın grid'inin DOM'da gerçek (13 hücreli)
-                # satırların YANINDA, virtualization için kullanılan
-                # 1-2 hücreli "spacer/placeholder" satırlar da
-                # bulundurduğuna işaret ediyor - ve bu placeholder'lar
-                # bazen SAYICA gerçek satırlardan FAZLA olabiliyor, bu
-                # yüzden saf çoğunluk oylaması yanlış tarafı seçiyordu.
-                # Artık çok kısa (<=2 hücreli) satırlar, daha uzun
-                # satırlar MEVCUTKEN oylamaya hiç KATILMIYOR - sadece
-                # hiç uzun satır yoksa (gerçekten tüm satırlar kısaysa)
-                # kısa satırlar da oylamaya dahil edilir.
-                _anlamli_hucreler = [s for s in bu_tur_hucreler if len(s) > 2]
-                _oy_havuzu = _anlamli_hucreler if _anlamli_hucreler else bu_tur_hucreler
+            # BUG FIX (art arda canlı testlerde doğrulanan örüntü): yanlış
+            # kilitlenen kolon sayısı HER SEFERİNDE küçük bir sayı (1 ya
+            # da 2) çıktı, doğrusu HER SEFERİNDE 13 idi. Bu, Fintables'ın
+            # grid'inin DOM'da gerçek (13 hücreli) satırların YANINDA,
+            # virtualization için kullanılan 1-2 hücreli "spacer/
+            # placeholder" satırlar da bulundurduğuna işaret ediyor - ve
+            # bu placeholder'lar bazen SAYICA gerçek satırlardan FAZLA
+            # olabiliyor. Bu yüzden çok kısa (<=2 hücreli) satırlar HİÇBİR
+            # ZAMAN şema oylamasına katılmaz.
+            #
+            # BUG FIX (2. tur): İlk denemede, bir turda HİÇ uzun satır
+            # yoksa (hepsi placeholder), kod yine de kısa satırları
+            # oylamaya dahil ediyordu ("yedek" olarak) - bu da önceden
+            # BAŞARIYLA biriken bir "13 kolon" adayını, sırf o turda
+            # şans eseri hiç gerçek satır görünmediği için SIFIRLIYORDU
+            # ve ardışık-2-tur şartı bir daha asla sağlanamıyordu. Artık
+            # bir turda 3'ten az "anlamlı" (>2 hücreli) satır varsa o tur
+            # şema açısından TAMAMEN ATLANIR - ne sayaç ilerler ne de
+            # sıfırlanır, önceki ilerleme korunur. Kısa satırlar SADECE,
+            # hiçbir turda HİÇ uzun satır görülmediyse (çok nadir bir
+            # durum), en son çare olarak aşağıdaki "azami deneme"
+            # bloğunda değerlendirilir.
+            _anlamli_hucreler = [s for s in bu_tur_hucreler if len(s) > 2]
 
-                _bu_tur_sayaci = Counter(len(s) for s in _oy_havuzu)
+            if len(_anlamli_hucreler) >= 3:
+                _bu_tur_sayaci = Counter(len(s) for s in _anlamli_hucreler)
                 _bu_tur_kolon_sayisi, _bu_tur_adet = _bu_tur_sayaci.most_common(1)[0]
-                if _bu_tur_adet / len(_oy_havuzu) >= 0.6:
+                if _bu_tur_adet / len(_anlamli_hucreler) >= 0.6:
                     _bu_turun_guvenilir_satirlari = [
-                        s for s in bu_tur_hucreler if len(s) == _bu_tur_kolon_sayisi
+                        s for s in _anlamli_hucreler if len(s) == _bu_tur_kolon_sayisi
                     ]
                     if _bu_tur_kolon_sayisi == _sema_onceki_kolon_sayisi:
                         _sema_sabit_sayac += 1
@@ -728,6 +745,8 @@ def _radar_sayfasindan_df_olustur(
                         _sema_sabit_sayac = 1
                         _sema_guvenilir_hucreler = list(_bu_turun_guvenilir_satirlari)
                     _sema_onceki_kolon_sayisi = _bu_tur_kolon_sayisi
+            # else: bu turda yeterli "anlamlı" (uzun) satır yok - hiçbir
+            # şey yapılmaz, mevcut aday/sayaç OLDUĞU GİBİ korunur.
 
             _yeterli_guven = (
                 _sema_onceki_kolon_sayisi is not None
@@ -736,8 +755,20 @@ def _radar_sayfasindan_df_olustur(
 
             # Deneme sayısı sınırına ulaşıldıysa (ya da hiç örnek
             # toplanamadıysa) elimizdeki en iyi tahminle devam et -
-            # sonsuza kadar beklemeyiz.
-            if _yeterli_guven or scroll_no >= SEMA_TESPIT_MAX_DENEME - 1:
+            # sonsuza kadar beklemeyiz. Eğer HİÇBİR turda uzun/anlamlı
+            # bir satır görülmediyse (çok nadir), en son çare olarak kısa
+            # satırları da değerlendiririz - yoksa şema hiç kesinleşemez.
+            if (
+                _sema_onceki_kolon_sayisi is None
+                and scroll_no >= _sema_azami_tur - 1
+                and bu_tur_hucreler
+            ):
+                _yedek_sayaci = Counter(len(s) for s in bu_tur_hucreler)
+                _sema_onceki_kolon_sayisi = _yedek_sayaci.most_common(1)[0][0]
+                _sema_guvenilir_hucreler = [
+                    s for s in bu_tur_hucreler if len(s) == _sema_onceki_kolon_sayisi
+                ]
+            if _yeterli_guven or scroll_no >= _sema_azami_tur - 1:
                 bu_tur_hucreler = _sema_guvenilir_hucreler or bu_tur_hucreler
                 if _sema_onceki_kolon_sayisi is not None:
                     veri_kolon_sayisi = _sema_onceki_kolon_sayisi
