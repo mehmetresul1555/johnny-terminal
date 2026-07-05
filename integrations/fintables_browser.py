@@ -815,6 +815,25 @@ def _radar_sayfasindan_df_olustur(
         f"Benzersiz: {len(veri_satirlari)} hisse."
     )
 
+    # BUG FIX: `hisse_kolon_index` burada güvenilir şekilde biliniyor
+    # (başlıktan ya da değer-tabanlı yedek yöntemle tespit edildi), AMA
+    # bu bilgi fonksiyonun DIŞINA (pre_screen_candidates,
+    # scoring/pre_screen.find_ticker_column) sadece kolon ADI üzerinden
+    # taşınıyor - eğer bu kolonun adı "Kolon_2" gibi otomatik üretilmiş
+    # bir isimse, dışarıdaki isim-tabanlı arama onu ASLA bulamaz ve
+    # "hisse kodu kolonu bulunamadı" hatasıyla akış çöker. Bu yüzden bu
+    # kolon, adı zaten tanınabilir değilse "Hisse" olarak yeniden
+    # adlandırılır - böylece bildiğimiz bilgi kaybolmadan sonraki
+    # adımlara (ön eleme, data_mapper) doğru şekilde ulaşır.
+    from scoring.pre_screen import find_ticker_column as _find_ticker_column_kontrol
+
+    if (
+        hisse_kolon_index < len(basliklar)
+        and _find_ticker_column_kontrol([basliklar[hisse_kolon_index]]) is None
+        and "Hisse" not in basliklar
+    ):
+        basliklar[hisse_kolon_index] = "Hisse"
+
     return pd.DataFrame(veri_satirlari, columns=basliklar)
 
 
