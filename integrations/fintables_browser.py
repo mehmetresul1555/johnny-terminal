@@ -595,37 +595,15 @@ def _radar_sayfasindan_df_olustur(
         )
         raise FintablesError(mesaj)
 
-    # BUG FIX: `wait_for_selector(RADAR_TABLE_SELECTOR_VARSAYILAN, ...)`
-    # yukarıda sadece tablonun KABUĞUNUN (table.grid) DOM'da belirmesini
-    # bekler - satırların (tbody tr) GERÇEKTEN dolduğunu DEĞİL. Tablo
-    # React tabanlı olduğu için kabuk önce, veriler (satırlar) biraz
-    # sonra (ayrı bir istek/render sonucu) gelebilir. Bu ayrı bekleme
-    # olmadan aşağıdaki döngü ilk turunu satırlar henüz boşken
-    # okuyabilir - bu da "Toplam hisse: 0" ile başlayıp hiç
-    # değişmediği için (yanlışlıkla) "tablo sonuna ulaşıldı" sanılıp
-    # erken vazgeçilmesine yol açar. Bu yüzden en az BİR satır
-    # görünene kadar ayrıca bekleniyor; bu bekleme zaman aşımına
-    # uğrasa bile (örn. tablo gerçekten boşsa) hata FIRLATILMAZ -
-    # aşağıdaki döngü kendi deneme/stabilizasyon mantığıyla devam eder.
-    try:
-        page.wait_for_selector(
-            f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr",
-            timeout=timeout_ms,
-        )
-    except Exception:
-        pass
-
     # BUG FIX (kök neden - canlı testte doğrulandı): thead:first-of-type
-    # GERÇEKTEN sadece TEK bir <tr> içeriyor ve bu satır SADECE 2 <th>
-    # ("#", "") barındırıyor - Fintables'ın gerçek kolon etiketleri
-    # (Hisse, Fiyat, Gün %, Hacim, Getiri dönemleri...) hiç <th> olarak
-    # yer almıyor (muhtemelen ikinci <th> tüm bu kolonları colspan ile
-    # kapsıyor ama metni boş/simge-tabanlı). Bu yüzden artık başlık
-    # sayısının veri hücre sayısıyla eşleşmesi BEKLENMİYOR: önce DOM'daki
-    # örnek satırlardan GERÇEK veri kolon sayısı tespit edilir, başlıklar
-    # bu sayıya göre yeniden kurulur (eldeki gerçek <th> metinleri
-    # index'e göre kullanılır, eksik kalan kolonlar için "Kolon_N" gibi
-    # otomatik adlar üretilir - veri KAYBOLMAZ, sadece adsız kalır).
+    # bazen sadece 1-2 <th> içeriyor ("#", "" gibi) - Fintables'ın gerçek
+    # kolon etiketleri (Hisse, Fiyat, Gün %, Hacim, Getiri dönemleri...)
+    # hiç <th> olarak yer almıyor olabilir. Bu yüzden başlık sayısının
+    # veri hücre sayısıyla eşleşmesi BEKLENMİYOR: gerçek veri kolon
+    # sayısı DOM'daki örnek satırlardan tespit edilir, başlıklar bu
+    # sayıya göre yeniden kurulur (eldeki gerçek <th> metinleri index'e
+    # göre kullanılır, eksik kalan kolonlar için "Kolon_N" gibi otomatik
+    # adlar üretilir - veri KAYBOLMAZ, sadece adsız kalır).
     basliklar_ham = []
     _thead_satirlari = page.locator(f"{RADAR_TABLE_SELECTOR_VARSAYILAN} thead:first-of-type tr")
     for _i in range(_thead_satirlari.count()):
@@ -640,88 +618,21 @@ def _radar_sayfasindan_df_olustur(
             "ile yeniden DOM taraması yapmanız gerekebilir."
         )
 
-    # DOM'da o an bulunan birkaç örnek satırı al (gerçek veri kolon
-    # sayısını VE - başlıktan bulunamazsa - hisse kodu kolonunu tahmin
-    # etmek için). Tablo henüz tam yüklenmemişse (örn. React bir an için
-    # az sayıda hücreli bir yükleme iskeleti/skeleton gösteriyorsa) İLK
-    # okumaya körü körüne güvenilmez: örnekler BİRİKTİRİLİR (attempts
-    # arası sıfırlanmaz) ve en az 8 örnek toplanıp bunların en az %70'i
-    # AYNI hücre sayısına sahip olana kadar (güvenli çoğunluk) devam
-    # edilir. Böylece geçici, az hücreli bir iskelet ilk birkaç
-    # denemede görülse bile gerçek veri geldikçe çoğunluk ona kayar.
-    # Yine de hiç satır bulunamazsa basliklar_ham olduğu gibi kullanılır
-    # ve ana döngü kendi deneme/scroll mantığıyla devam eder.
-    _ornek_satirlar = []
-    for _deneme in range(15):
-        try:
-            _satir_locator_on = page.locator(
-                f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr"
-            )
-            for _i in range(min(_satir_locator_on.count(), 5)):
-                _hucreler_on = [h.strip() for h in _satir_locator_on.nth(_i).locator("td").all_inner_texts()]
-                if _hucreler_on:
-                    _ornek_satirlar.append(_hucreler_on)
-        except Exception:
-            pass
+    # BUG FIX (mimari düzeltme): gerçek veri kolon sayısı ARTIK ayrı,
+    # pasif (scroll ETMEYEN) bir ön-bekleme aşamasında tespit edilmiyor.
+    # Önceki denemede bu ayrı aşama sayfayı hiç kaydırmıyordu; eğer
+    # Fintables'ın grid'i satırları göstermek için bir kaydırma/etkileşim
+    # gerektiriyorsa (canlı testte tam olarak bu yaşandı: pasif bekleme
+    # sırasında satır sayısı 0 kaldı, ama ana döngü kaydırmaya
+    # başlayınca satırlar göründü) o ayrı aşama ASLA veri göremez ve
+    # şema yanlış (örn. tek kolonlu) kilitlenirdi. Artık şema tespiti
+    # ANA DÖNGÜNÜN İÇİNDE, scroll ede ede yapılıyor: en az 8 örnek satır
+    # birikip bunların en az %70'i aynı hücre sayısına sahip olana kadar
+    # (ya da SEMA_TESPIT_MAX_DENEME turu dolana kadar) satırlar
+    # `gorulen_hisseler`e YAZILMAZ (yanlış şema ile veri kirletilmesin
+    # diye) ama scroll/deneme normal şekilde devam eder.
+    SEMA_TESPIT_MAX_DENEME = 15
 
-        if len(_ornek_satirlar) >= 8:
-            _uzunluk_sayaci_on = Counter(len(s) for s in _ornek_satirlar)
-            _en_yaygin_uzunluk, _en_yaygin_adet = _uzunluk_sayaci_on.most_common(1)[0]
-            if _en_yaygin_adet / len(_ornek_satirlar) >= 0.7:
-                break
-
-        try:
-            page.wait_for_timeout(300)
-        except Exception:
-            pass
-
-    if _ornek_satirlar:
-        # En sık görülen hücre sayısını "gerçek" veri kolon sayısı kabul
-        # et (bazı satırlar skeleton/placeholder olup farklı sayıda
-        # hücre içerebilir; çoğunluk gerçek veriyi yansıtır).
-        _uzunluk_sayaci = Counter(len(s) for s in _ornek_satirlar)
-        veri_kolon_sayisi = _uzunluk_sayaci.most_common(1)[0][0]
-    else:
-        veri_kolon_sayisi = len(basliklar_ham)
-
-    if veri_kolon_sayisi == len(basliklar_ham):
-        basliklar = basliklar_ham
-    else:
-        _bildir(
-            f"Bilgi: thead'den okunan başlık sayısı ({len(basliklar_ham)}: "
-            f"{basliklar_ham}) gerçek veri kolon sayısıyla "
-            f"({veri_kolon_sayisi}) uyuşmuyor - eksik kolonlar için "
-            "otomatik ad üretiliyor, veri KAYBOLMUYOR."
-        )
-        basliklar = []
-        for _i in range(veri_kolon_sayisi):
-            if _i < len(basliklar_ham) and basliklar_ham[_i]:
-                basliklar.append(basliklar_ham[_i])
-            else:
-                basliklar.append(f"Kolon_{_i + 1}")
-
-    hisse_kolon_index = _radar_hisse_kolon_indexi_bul(basliklar)
-    if hisse_kolon_index is None and _ornek_satirlar:
-        hisse_kolon_index = _radar_hisse_kolon_indexi_deger_ile_bul(_ornek_satirlar)
-        if hisse_kolon_index is not None:
-            _bildir(
-                "Bilgi: hisse kodu kolonu başlıktan değil, örnek "
-                f"değerlerden tespit edildi (kolon {hisse_kolon_index + 1}: "
-                f"{basliklar[hisse_kolon_index]!r})."
-            )
-    if hisse_kolon_index is None:
-        hisse_kolon_index = 0
-        _bildir(
-            "UYARI: hisse kodu kolonu ne başlıktan ne örnek değerlerden "
-            "tespit edilebildi; ilk kolon (index 0) varsayılıyor."
-        )
-
-    # Tüm satırları hisse koduna göre biriktiren sözlük. Virtual
-    # scrolling nedeniyle DOM'daki satırlar tur tur DEĞİŞEBİLİR/
-    # kaybolabilir; bu yüzden okuma tek seferlik değil, aşağıdaki
-    # döngüde HER turda mevcut DOM durumu bu sözlüğe eklenir. Aynı
-    # hisse (aynı anahtar) tekrar görülürse dict semantiği gereği
-    # SADECE güncellenir - duplicate/tekrar eklenme YOKTUR.
     gorulen_hisseler = {}
     toplam_okunan_satir = 0
     toplam_uyumsuz_satir = 0
@@ -733,6 +644,11 @@ def _radar_sayfasindan_df_olustur(
     son_satir_sayisi = 0
     son_ornek_hucreler = None
 
+    sema_kesinlesti = False
+    basliklar = None
+    hisse_kolon_index = None
+    _uzunluk_sayaci = Counter()
+
     while True:
         satir_locator = page.locator(
             f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr"
@@ -740,30 +656,98 @@ def _radar_sayfasindan_df_olustur(
         satir_sayisi = satir_locator.count()
         son_satir_sayisi = satir_sayisi
 
+        bu_tur_hucreler = []
         for i in range(satir_sayisi):
             hucreler = [h.strip() for h in satir_locator.nth(i).locator("td").all_inner_texts()]
-            if i == 0:
-                son_ornek_hucreler = hucreler
-            if len(hucreler) != len(basliklar):
-                toplam_uyumsuz_satir += 1
+            if not hucreler:
                 continue
-            anahtar = hucreler[hisse_kolon_index].strip().upper()
-            if not anahtar:
-                continue
-            toplam_okunan_satir += 1
-            gorulen_hisseler[anahtar] = hucreler
+            bu_tur_hucreler.append(hucreler)
+            son_ornek_hucreler = hucreler
+
+        if not sema_kesinlesti:
+            for hucreler in bu_tur_hucreler:
+                _uzunluk_sayaci[len(hucreler)] += 1
+            _toplam_ornek = sum(_uzunluk_sayaci.values())
+
+            _yeterli_guven = False
+            if _toplam_ornek >= 8:
+                _en_yaygin_uzunluk, _en_yaygin_adet = _uzunluk_sayaci.most_common(1)[0]
+                _yeterli_guven = (_en_yaygin_adet / _toplam_ornek) >= 0.7
+
+            # Deneme sayısı sınırına ulaşıldıysa (ya da hiç örnek
+            # toplanamadıysa) elimizdeki en iyi tahminle devam et -
+            # sonsuza kadar beklemeyiz.
+            if _yeterli_guven or scroll_no >= SEMA_TESPIT_MAX_DENEME - 1:
+                if _uzunluk_sayaci:
+                    veri_kolon_sayisi = _uzunluk_sayaci.most_common(1)[0][0]
+                else:
+                    veri_kolon_sayisi = len(basliklar_ham)
+
+                if veri_kolon_sayisi == len(basliklar_ham):
+                    basliklar = basliklar_ham
+                else:
+                    _bildir(
+                        f"Bilgi: thead'den okunan başlık sayısı "
+                        f"({len(basliklar_ham)}: {basliklar_ham}) gerçek "
+                        f"veri kolon sayısıyla ({veri_kolon_sayisi}) "
+                        "uyuşmuyor - eksik kolonlar için otomatik ad "
+                        "üretiliyor, veri KAYBOLMUYOR."
+                    )
+                    basliklar = []
+                    for _i in range(veri_kolon_sayisi):
+                        if _i < len(basliklar_ham) and basliklar_ham[_i]:
+                            basliklar.append(basliklar_ham[_i])
+                        else:
+                            basliklar.append(f"Kolon_{_i + 1}")
+
+                hisse_kolon_index = _radar_hisse_kolon_indexi_bul(basliklar)
+                if hisse_kolon_index is None and bu_tur_hucreler:
+                    hisse_kolon_index = _radar_hisse_kolon_indexi_deger_ile_bul(bu_tur_hucreler)
+                    if hisse_kolon_index is not None:
+                        _bildir(
+                            "Bilgi: hisse kodu kolonu başlıktan değil, "
+                            "örnek değerlerden tespit edildi (kolon "
+                            f"{hisse_kolon_index + 1}: "
+                            f"{basliklar[hisse_kolon_index]!r})."
+                        )
+                if hisse_kolon_index is None:
+                    hisse_kolon_index = 0
+                    _bildir(
+                        "UYARI: hisse kodu kolonu ne başlıktan ne örnek "
+                        "değerlerden tespit edilebildi; ilk kolon (index "
+                        "0) varsayılıyor."
+                    )
+
+                sema_kesinlesti = True
+                _bildir(
+                    f"Şema belirlendi: {veri_kolon_sayisi} veri kolonu, "
+                    f"hisse kodu kolonu index {hisse_kolon_index} "
+                    f"({basliklar[hisse_kolon_index]!r})."
+                )
+
+        if sema_kesinlesti:
+            for hucreler in bu_tur_hucreler:
+                if len(hucreler) != len(basliklar):
+                    toplam_uyumsuz_satir += 1
+                    continue
+                anahtar = hucreler[hisse_kolon_index].strip().upper()
+                if not anahtar:
+                    continue
+                toplam_okunan_satir += 1
+                gorulen_hisseler[anahtar] = hucreler
 
         scroll_no += 1
         benzersiz_sayi = len(gorulen_hisseler)
         _bildir(f"Scroll {scroll_no}: Toplam hisse: {benzersiz_sayi}")
 
-        if benzersiz_sayi == onceki_benzersiz_sayi:
-            sabit_kalma_sayaci += 1
-            if sabit_kalma_sayaci >= sabit_kalma_esigi:
-                break
-        else:
-            sabit_kalma_sayaci = 0
-        onceki_benzersiz_sayi = benzersiz_sayi
+        if sema_kesinlesti:
+            if benzersiz_sayi == onceki_benzersiz_sayi:
+                sabit_kalma_sayaci += 1
+                if sabit_kalma_sayaci >= sabit_kalma_esigi:
+                    break
+            else:
+                sabit_kalma_sayaci = 0
+            onceki_benzersiz_sayi = benzersiz_sayi
 
         if scroll_no >= max_scroll_deneme:
             _bildir(
@@ -778,6 +762,12 @@ def _radar_sayfasindan_df_olustur(
             page.wait_for_timeout(scroll_bekleme_ms)
         except Exception:
             pass
+
+    if basliklar is None:
+        # Şema hiçbir zaman kesinleşemedi (hiç örnek satır bulunamadı) -
+        # tanı mesajında en azından ham başlıkları gösterebilelim.
+        basliklar = basliklar_ham
+        hisse_kolon_index = hisse_kolon_index or 0
 
     veri_satirlari = list(gorulen_hisseler.values())
 
