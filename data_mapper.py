@@ -29,8 +29,17 @@ import re
 import pandas as pd
 
 # Johnny Terminal'in beklediği standart kolonlar
+#
+# GÜNCELLEME (kullanıcı isteği - rule_engine yeniden tasarımı):
+# gun_yuzde/getiri_1h/getiri_1a/getiri_3a eklendi. Fintables Radar'ın
+# "Getiri" sekmesi HER ZAMAN bu alanları sağlar (kullanıcı ekran
+# görüntüsüyle doğruladı: Fiyat, Gün %, Hacim, Getiri % Son 1 hafta/1
+# ay/3 ay... sabit kolonlardır) - bu yüzden scoring/rule_engine.py artık
+# otomasyonda HİÇBİR ZAMAN gelmeyen volume_ratio/net_borc_favok/
+# yeni_is_iliskisi yerine bunlara dayanıyor.
 STANDARD_COLUMNS = [
-    "hisse", "fiyat", "rsi", "macd_signal", "ema20", "ema50", "ema200",
+    "hisse", "fiyat", "gun_yuzde", "getiri_1h", "getiri_1a", "getiri_3a",
+    "rsi", "macd_signal", "ema20", "ema50", "ema200",
     "adx", "atr_pct", "volume_ratio", "fk", "pddd", "roe",
     "net_borc_favok", "haber_puani", "kurumsal_puani", "piyasa_rejimi",
     "yeni_is_iliskisi",
@@ -64,6 +73,7 @@ OPTIONAL_STANDARD_COLUMNS = [
     "haber_puani", "kurumsal_puani", "piyasa_rejimi",
     "rsi", "macd_signal", "ema20", "ema50", "ema200", "adx", "atr_pct",
     "fk", "pddd", "roe", "net_borc_favok", "volume_ratio",
+    "gun_yuzde", "getiri_1h", "getiri_1a", "getiri_3a",
 ]
 
 # Her Johnny kolonu için bilinen Türkçe/İngilizce takma adlar (normalize
@@ -77,6 +87,26 @@ COLUMN_ALIASES = {
     "fiyat": [
         "fiyat", "son fiyat", "kapanis", "kapanis fiyati", "close",
         "last", "guncel fiyat", "price", "son",
+    ],
+    # YENİ ÖZELLİK (kullanıcı isteği - rule_engine yeniden tasarımı):
+    # Fintables Radar'ın HER ZAMAN sağladığı Gün %/Getiri kolonları -
+    # integrations/fintables_browser.py bunları pozisyona göre (bkz.
+    # scoring/pre_screen.RADAR_POZISYONEL_INDEKS) "Gün %"/"Getiri_1H"/
+    # "Getiri_1A"/"Getiri_3A" gibi TAM eşleşecek isimlerle yeniden
+    # adlandırır - buradaki alias'lar bilinçli olarak bu isimlerle
+    # BİREBİR (normalize edilince) eşleşecek şekilde seçildi.
+    "gun_yuzde": ["gun_yuzde", "gun", "gun yuzde", "gunluk degisim", "daily change"],
+    "getiri_1h": [
+        "getiri_1h", "getiri 1 hafta", "1 haftalik getiri",
+        "haftalik getiri", "1 hafta getiri", "1w return", "weekly return",
+    ],
+    "getiri_1a": [
+        "getiri_1a", "getiri 1 ay", "1 aylik getiri", "aylik getiri",
+        "1 ay getiri", "1m return", "monthly return",
+    ],
+    "getiri_3a": [
+        "getiri_3a", "getiri 3 ay", "3 aylik getiri",
+        "3 ay getiri", "3m return", "quarterly return",
     ],
     "rsi": ["rsi", "rsi14", "rsi(14)", "rsi 14", "gorece guc endeksi"],
     "macd_signal": [

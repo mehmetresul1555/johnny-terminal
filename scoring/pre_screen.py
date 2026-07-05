@@ -138,8 +138,19 @@ def _index_benzeri_kolon_mu(sayisal_seri, toplam_satir):
 # bir yedek olarak kullanılır - SADECE otomatik üretilmiş ('Kolon_N' ya
 # da '#' gibi) isimler için; gerçek/tanınabilir bir isim varsa ASLA
 # üzerine yazılmaz.
+#
+# GÜNCELLEME (kullanıcı ekran görüntüsüyle DOĞRULADI - "Johnny pipeline
+# düzeltmesi" / rule_engine yeniden tasarımı): 5-12 arası kolonların tam
+# olarak neye karşılık geldiği teyit edildi: Getiri % (Son 1 hafta),
+# Getiri % (Son 1 ay), Getiri % (Son 3 ay), Getiri % (Son 6 ay), Getiri %
+# (Yılbaşından bugüne), Getiri % (Son 1 yıl), Getiri % (Son 3 yıl),
+# Getiri % (Son 5 yıl). Şimdilik rule_engine'in kullandığı 1 hafta/1 ay/
+# 3 ay eklendi; ihtiyaç olursa diğerleri de aynı şekilde eklenebilir.
 RADAR_POZISYONEL_TOPLAM_KOLON = 13
-RADAR_POZISYONEL_INDEKS = {"fiyat": 2, "gun": 3, "hacim": 4}
+RADAR_POZISYONEL_INDEKS = {
+    "fiyat": 2, "gun": 3, "hacim": 4,
+    "getiri_1h": 5, "getiri_1a": 6, "getiri_3a": 7,
+}
 
 
 def _isim_otomatik_uretilmis_mi(kolon_adi):

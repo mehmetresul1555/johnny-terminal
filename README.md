@@ -222,6 +222,10 @@ Dosyanın aşağıdaki kolonları içermesi gerekir:
 |---|---|---|
 | `hisse` | Evet | Hisse kodu (örn. THYAO) |
 | `fiyat` | Evet | Güncel fiyat |
+| `gun_yuzde` | Opsiyonel | Günlük fiyat değişim yüzdesi. Fintables Radar'dan her zaman gelir; Rule Engine R2'de kullanılır. |
+| `getiri_1h` | Opsiyonel | Son 1 haftalık getiri yüzdesi. Fintables Radar'dan her zaman gelir; Rule Engine R2'de kullanılır. |
+| `getiri_1a` | Opsiyonel | Son 1 aylık getiri yüzdesi. Fintables Radar'dan her zaman gelir; Rule Engine R4'te kullanılır. |
+| `getiri_3a` | Opsiyonel | Son 3 aylık getiri yüzdesi. Fintables Radar'dan her zaman gelir; Rule Engine R4'te kullanılır. |
 | `rsi` | Opsiyonel | RSI (14) değeri. Fintables otomasyonunda TradingView'den alınır (bkz. yukarıda); alınamazsa nötr varsayımla hesaplanır (bkz. aşağıda). |
 | `macd_signal` | Opsiyonel | MACD histogramı (MACD-Sinyal farkı); pozitif/negatif. Aynı şekilde opsiyonel. |
 | `ema20` | Opsiyonel | 20 günlük EMA. TradingView'den alınır. |
@@ -229,7 +233,7 @@ Dosyanın aşağıdaki kolonları içermesi gerekir:
 | `ema200` | Opsiyonel | 200 günlük EMA. |
 | `adx` | Opsiyonel | ADX (trend gücü). |
 | `atr_pct` | Opsiyonel | Günlük ATR'nin fiyata oranı (%). TradingView'den gelen ATR (mutlak) değeri fiyata bölünerek yüzdeye çevirilir. |
-| `volume_ratio` | Evet | Güncel hacim / ortalama hacim oranı |
+| `volume_ratio` | Opsiyonel | Güncel hacim / ortalama hacim oranı. Fintables Radar bunu hiçbir zaman sağlamaz; yoksa nötr (1.0) varsayımla hesaplanır. |
 | `fk` | Opsiyonel | Fiyat/Kazanç oranı. Fintables otomasyonunda "Piyasa Çarpanları" sayfasından alınmaya çalışılır; bot koruması çıkarsa ya da okunamazsa nötr varsayımla hesaplanır (bkz. aşağıda). |
 | `pddd` | Opsiyonel | Piyasa Değeri/Defter Değeri oranı. Aynı şekilde "Piyasa Çarpanları" sayfasından, opsiyonel. |
 | `roe` | Opsiyonel | Özkaynak karlılığı (%). "Rasyo Analiz Tablosu" sayfasından, opsiyonel. |
@@ -237,7 +241,7 @@ Dosyanın aşağıdaki kolonları içermesi gerekir:
 | `haber_puani` | Opsiyonel | Haber/KAP/katalizör puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride KAP entegrasyonuyla otomatikleşecek. |
 | `kurumsal_puani` | Opsiyonel | Kurumsal beklenti puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride analist hedef fiyatlarından otomatikleşecek. |
 | `piyasa_rejimi` | Opsiyonel | Piyasa rejimi puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride BIST100/XBANK/XUSIN/hacim/VIX/USD-TRY verilerinden Johnny tarafından otomatik hesaplanacak. |
-| `yeni_is_iliskisi` | Opsiyonel | Yeni bir iş ilişkisi/ortaklık var mı (1/0). Rule Engine'in R4 kuralı için kullanılır; yoksa 0 kabul edilir |
+| `yeni_is_iliskisi` | Opsiyonel | Yeni bir iş ilişkisi/ortaklık var mı (1/0). v0.4 ile Rule Engine R4 artık bunu KULLANMIYOR (Fintables hiçbir zaman sağlamaz); alan geriye dönük uyumluluk için duruyor. |
 
 `haber_puani`, `kurumsal_puani` ve `piyasa_rejimi` Johnny'nin kendi
 öznel değerlendirmeleridir — Fintables (veya başka bir piyasa verisi
@@ -306,15 +310,38 @@ Taban puanın altı bileşeni:
 
 ### Rule Engine kuralları (`scoring/rule_engine.py`)
 
+**v0.4 revizyonu (kullanıcı geri bildirimi - "Top 3 sürekli UZAK DUR
+çıkıyor"):** eski R2/R3/R4, Fintables + TradingView otomasyonunun
+HİÇBİR ZAMAN sağlamadığı kolonlara (`volume_ratio`, `net_borc_favok`,
+`yeni_is_iliskisi`) bağlıydı — bu yüzden otomatik "Fintables'tan
+Güncelle" akışında bu üç kural pratikte hiç tetiklenemiyor, sadece R1
+(+10) ulaşılabilir kalıyor ve toplam skor 70 (İZLE) eşiğinin altında
+sıkışıyordu. Kurallar artık SADECE otomasyonda gerçekten gelen alanlara
+(Gün %, 1 hafta/1 ay/3 aylık getiri — Fintables Radar'ın "Getiri"
+sekmesi bunları HER ZAMAN sağlar; ROE/F-K/PD-DD; RSI/MACD/EMA) dayanıyor
+— eşikler/puanlar şişirilmedi, Johnny hâlâ seçici.
+
 | Kural | Koşul | Bonus |
 |---|---|---|
 | R1 | EMA20 > EMA50 > EMA200 + MACD pozitif + ADX > 25 | +10 |
-| R2 | RSI 55-65 + Hacim oranı > 1.5 | +8 |
-| R3 | ROE > %25 + Net Borç/FAVÖK < 2 | +8 |
-| R4 | Yeni iş ilişkisi + Kurumsal beklenti yüksek (≥8) | +7 |
+| R2 | RSI 50-68 (geniş ideal bant) + Gün % pozitif + Son 1 haftalık getiri pozitif | +8 |
+| R3 | ROE > %15 (yoksa F/K ≤15 ve PD/DD ≤2.5 makul aralıkta) | +8 |
+| R4 | 1 aylık getiri pozitif + 3 aylık getiri > -%10 + TradingView teknik özeti olumlu (RSI>50, MACD histogram pozitif, EMA20>EMA50) | +7 |
 
 Yeni bir kural eklemek için `scoring/rule_engine.py` içindeki `RULES`
 listesine bir madde eklemek yeterlidir.
+
+**Not (Radar'ın sabit kolon sırası - kullanıcı ekran görüntüsüyle
+doğrulandı):** Fintables Radar'ın "Getiri" sekmesi her zaman şu 13
+kolonu sağlar: `#, Hisse, Fiyat, Gün %, Hacim, Getiri % (Son 1 hafta),
+Getiri % (Son 1 ay), Getiri % (Son 3 ay), Getiri % (Son 6 ay), Getiri %
+(Yılbaşından bugüne), Getiri % (Son 1 yıl), Getiri % (Son 3 yıl),
+Getiri % (Son 5 yıl)`. thead genelde bunları `<th>` olarak sağlamadığı
+için (`_radar_sayfasindan_df_olustur`), Fiyat/Gün %/Hacim/Getiri_1H/1A/
+3A artık bu bilinen SABİT pozisyona göre yeniden adlandırılıyor VE
+(Fiyat/Gün %/Getiri_1H/1A/3A için) Türkçe formatlı metinden temiz
+float'a çevriliyor — Hacim kasıtlı olarak ham metin ("168,48 mn")
+kalıyor (bkz. kod içi not).
 
 Toplam skora göre durum ataması:
 

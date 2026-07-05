@@ -985,7 +985,14 @@ def _radar_sayfasindan_df_olustur(
         _isim_otomatik_uretilmis_mi as _isim_otomatik_uretilmis_mi_kontrol,
     )
 
-    _POZISYONEL_GERCEK_ISIM = {"fiyat": "Fiyat", "gun": "Gün %", "hacim": "Hacim"}
+    # GÜNCELLEME (kullanıcı ekran görüntüsüyle DOĞRULADI): Getiri
+    # kolonlarının 5/6/7 pozisyonlarının sırasıyla "Son 1 hafta"/"Son 1
+    # ay"/"Son 3 ay" olduğu teyit edildi - rule_engine.py'nin otomasyon
+    # verisine dayalı yeni kuralları (R2/R4) bu isimleri arıyor.
+    _POZISYONEL_GERCEK_ISIM = {
+        "fiyat": "Fiyat", "gun": "Gün %", "hacim": "Hacim",
+        "getiri_1h": "Getiri_1H", "getiri_1a": "Getiri_1A", "getiri_3a": "Getiri_3A",
+    }
     if len(basliklar) == _RADAR_POZISYONEL_TOPLAM_KOLON:
         for _anahtar, _idx in _RADAR_POZISYONEL_INDEKS.items():
             _gercek_isim = _POZISYONEL_GERCEK_ISIM.get(_anahtar)
@@ -998,7 +1005,40 @@ def _radar_sayfasindan_df_olustur(
             ):
                 basliklar[_idx] = _gercek_isim
 
-    return pd.DataFrame(veri_satirlari, columns=basliklar)
+    df_sonuc = pd.DataFrame(veri_satirlari, columns=basliklar)
+
+    # KRİTİK BUG FIX (kullanıcı şikayeti - "Top 3 sürekli UZAK DUR
+    # çıkıyor" araştırması sırasında bulundu): Radar hücreleri HER ZAMAN
+    # Türkçe formatlı STRING gelir (virgül ondalık, bazen '%' işareti).
+    # Fiyat/Gün %/Getiri_1H/1A/3A kolonları bu HAM STRING haliyle
+    # data_mapper/rule_engine.py'ye kadar taşınıyordu.
+    # rule_engine._safe_float (Python'un yerleşik float()'ı) virgüllü
+    # ("1,20") ya da yüzdeli ("%1,20") bir string'i PARSE EDEMEZ, sessizce
+    # varsayılana (genelde 0.0) düşer - bu yüzden yeni R2/R4 kuralları hiç
+    # tetiklenemiyordu. DAHA VAHİMİ: bir aday gerçekten İZLE/AL eşiğine
+    # ulaştığında scoring/johnny_score.compute_trade_levels(row["fiyat"])
+    # içindeki `float(fiyat)` çağrısı `float("14,34")` ile ValueError
+    # fırlatıp TÜM skorlamayı ÇÖKERTECEKTİ (bugüne kadar hiçbir aday o
+    # eşiğe ulaşmadığı için bu çökme hiç tetiklenmemişti - potansiyel bir
+    # zaman bombasıydı). Fiyat/Gün %/Getiri_1H/1A/3A artık burada TEMİZ
+    # (nokta ondalıklı) float'a çevriliyor.
+    #
+    # NOT: Hacim KASITLI OLARAK dönüştürülmüyor - ham "mn"/"mr" çarpanlı
+    # hacim, data_mapper'da (ayrı, bilinen bir konu olan) "volume_ratio"
+    # standart kolonuyla eşleşebiliyor; bunu float'a çevirmek
+    # momentum_engine'in "volume_ratio"yu (0.5-3.0 aralığı beklenirken)
+    # devasa bir ham hacim sayısı sanıp yanlışlıkla tam puan vermesine yol
+    # açardı. Hacim string kaldığı sürece bu eşleşme zaten zararsız
+    # şekilde (parse hatası -> nötr varsayılan) sonuçlanıyor.
+    if len(basliklar) == _RADAR_POZISYONEL_TOPLAM_KOLON:
+        from scoring.pre_screen import _sayiya_cevir as _sayiya_cevir_kontrol
+
+        for _anahtar in ("fiyat", "gun", "getiri_1h", "getiri_1a", "getiri_3a"):
+            _kolon_adi = _POZISYONEL_GERCEK_ISIM.get(_anahtar)
+            if _kolon_adi and _kolon_adi in df_sonuc.columns:
+                df_sonuc[_kolon_adi] = df_sonuc[_kolon_adi].map(_sayiya_cevir_kontrol)
+
+    return df_sonuc
 
 
 def _tr_sayi(metin):
