@@ -644,10 +644,26 @@ def _radar_sayfasindan_df_olustur(
     son_satir_sayisi = 0
     son_ornek_hucreler = None
 
+    # BUG FIX: ilk denemede tüm örnekler TEK bir kümülatif sayaçta
+    # biriktirilip "8 örnek + %70 çoğunluk" eşiği kontrol ediliyordu -
+    # ama bu eşik TEK bir (henüz hiç scroll edilmemiş) ilk okumada bile
+    # sağlanabiliyordu (örn. sayfa ilk açıldığında 20+ iskelet/placeholder
+    # satırı BİRDEN görünüyorsa). Canlı testte tam olarak bu oldu: şema
+    # yanlışlıkla (1 kolon) kilitlendi ve BİR DAHA ASLA yeniden
+    # değerlendirilmedi. Artık ŞEMA, ARDIŞIK EN AZ SEMA_STABIL_ESIK
+    # SCROLL TURUNDA AYNI kolon sayısının görülmesi şartıyla kilitleniyor
+    # (kod tabanındaki kanıtlanmış "art arda sabit kalma" deseniyle
+    # aynı yaklaşım) - yani en az bir scroll gerçekleşmiş olmalı ve o
+    # scroll sonrası da AYNI sonuç tekrar gözlenmeli. Bu, tek bir
+    # yanıltıcı ilk okumanın şemayı kalıcı olarak yanlış kilitlemesini
+    # önler.
+    SEMA_STABIL_ESIK = 2
     sema_kesinlesti = False
     basliklar = None
     hisse_kolon_index = None
-    _uzunluk_sayaci = Counter()
+    _sema_onceki_kolon_sayisi = None
+    _sema_sabit_sayac = 0
+    _sema_guvenilir_hucreler = []
 
     while True:
         satir_locator = page.locator(
@@ -665,21 +681,50 @@ def _radar_sayfasindan_df_olustur(
             son_ornek_hucreler = hucreler
 
         if not sema_kesinlesti:
-            for hucreler in bu_tur_hucreler:
-                _uzunluk_sayaci[len(hucreler)] += 1
-            _toplam_ornek = sum(_uzunluk_sayaci.values())
+            # Bu turun (iterasyonun) KENDİ İÇİNDEKİ çoğunluğunu hesapla -
+            # önceki turlarla BİRİKTİRMEDEN (şema kararı SADECE bu turun
+            # kendi çoğunluğuna bakar - bkz. yukarıdaki BUG FIX notu). En
+            # az 3 satır yoksa bu tur kararsız/gürültülü kabul edilir,
+            # sabit kalma sayacı bozulmadan bir sonraki (scroll edilmiş)
+            # tura geçilir.
+            #
+            # BUG FIX (veri kaybı): şema onaylanana kadar geçen "ısınma"
+            # turlarında görülen satırlar ÖNCEDEN sadece SON turunkiyle
+            # değiştiriliyordu (`=`), bu da onaylamadan HEMEN ÖNCEKİ
+            # turdan daha eski, ama yine şemaya UYAN satırların kalıcı
+            # olarak kaybolmasına yol açıyordu (bkz. mock test - 130
+            # sentetik hisseden sadece 110'u geldi). Artık aynı aday
+            # kolon sayısı geçerli olduğu sürece uyumlu satırlar
+            # BİRİKTİRİLİR (`extend`); aday kolon sayısı DEĞİŞİRSE
+            # (farklı bir şemaya geçildiyse) birikim sıfırlanıp yeniden
+            # başlar.
+            if len(bu_tur_hucreler) >= 3:
+                _bu_tur_sayaci = Counter(len(s) for s in bu_tur_hucreler)
+                _bu_tur_kolon_sayisi, _bu_tur_adet = _bu_tur_sayaci.most_common(1)[0]
+                if _bu_tur_adet / len(bu_tur_hucreler) >= 0.6:
+                    _bu_turun_guvenilir_satirlari = [
+                        s for s in bu_tur_hucreler if len(s) == _bu_tur_kolon_sayisi
+                    ]
+                    if _bu_tur_kolon_sayisi == _sema_onceki_kolon_sayisi:
+                        _sema_sabit_sayac += 1
+                        _sema_guvenilir_hucreler.extend(_bu_turun_guvenilir_satirlari)
+                    else:
+                        _sema_sabit_sayac = 1
+                        _sema_guvenilir_hucreler = list(_bu_turun_guvenilir_satirlari)
+                    _sema_onceki_kolon_sayisi = _bu_tur_kolon_sayisi
 
-            _yeterli_guven = False
-            if _toplam_ornek >= 8:
-                _en_yaygin_uzunluk, _en_yaygin_adet = _uzunluk_sayaci.most_common(1)[0]
-                _yeterli_guven = (_en_yaygin_adet / _toplam_ornek) >= 0.7
+            _yeterli_guven = (
+                _sema_onceki_kolon_sayisi is not None
+                and _sema_sabit_sayac >= SEMA_STABIL_ESIK
+            )
 
             # Deneme sayısı sınırına ulaşıldıysa (ya da hiç örnek
             # toplanamadıysa) elimizdeki en iyi tahminle devam et -
             # sonsuza kadar beklemeyiz.
             if _yeterli_guven or scroll_no >= SEMA_TESPIT_MAX_DENEME - 1:
-                if _uzunluk_sayaci:
-                    veri_kolon_sayisi = _uzunluk_sayaci.most_common(1)[0][0]
+                bu_tur_hucreler = _sema_guvenilir_hucreler or bu_tur_hucreler
+                if _sema_onceki_kolon_sayisi is not None:
+                    veri_kolon_sayisi = _sema_onceki_kolon_sayisi
                 else:
                     veri_kolon_sayisi = len(basliklar_ham)
 
