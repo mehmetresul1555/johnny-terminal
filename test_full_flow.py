@@ -32,7 +32,13 @@ sys.path.insert(0, str(BASE_DIR))
 
 import data_mapper  # noqa: E402
 from integrations import fintables_browser  # noqa: E402
-from scoring.johnny_score import OPTIONAL_COLUMNS, REQUIRED_COLUMNS, score_dataframe  # noqa: E402
+from scoring.johnny_score import (  # noqa: E402
+    NO_OPPORTUNITY_MESSAGE,
+    OPTIONAL_COLUMNS,
+    REQUIRED_COLUMNS,
+    filter_tradeable,
+    score_dataframe,
+)
 
 CONFIG_PATH = BASE_DIR / "config" / "watchlist.yaml"
 
@@ -101,18 +107,29 @@ def main():
 
     log("Johnny Score hesaplandı.")
 
-    print("\n" + "=" * 60)
-    print("TOP 3")
-    print("=" * 60)
-    for _, row in sonuc.head(3).iterrows():
-        print(f"\n{row['Hisse']} - {row['Durum']} ({row['Johnny Score']:.0f} puan)")
-        print(
-            f"  Fiyat: {row['Fiyat']}  Alım Aralığı: {row['Alım Aralığı']}  "
-            f"Stop: {row['Stop']}  Hedef 1: {row['Hedef 1']}  Hedef 2: {row['Hedef 2']}"
-        )
-        print(f"  Gerekçe: {row['Gerekçe']}")
+    # v1.0 REVİZYON (kullanıcı isteği - "Johnny artık bir puanlama motoru
+    # değil, bir TRADE ASİSTANI"): kullanıcıya ASLA "UZAK DUR" etiketli
+    # hisseler Top 3 olarak gösterilmez - sonuc.head(3) yerine sadece
+    # gerçekten işlem yapılabilir (AL/İZLE) adaylar (bkz. filter_tradeable)
+    # kullanılır. Hiçbir aday bu seviyeye ulaşmıyorsa NO_OPPORTUNITY_MESSAGE
+    # gösterilir.
+    firsatlar = filter_tradeable(sonuc)
 
-    log("Top 3 hazır.")
+    print("\n" + "=" * 60)
+    print("TRADE EDİLEBİLİR FIRSATLAR")
+    print("=" * 60)
+    if firsatlar.empty:
+        print(f"\n{NO_OPPORTUNITY_MESSAGE}")
+    else:
+        for _, row in firsatlar.head(3).iterrows():
+            print(f"\n{row['Hisse']} - {row['Durum']} ({row['Johnny Score']:.0f} puan)")
+            print(
+                f"  Fiyat: {row['Fiyat']}  Alım Aralığı: {row['Alım Aralığı']}  "
+                f"Stop: {row['Stop']}  Hedef 1: {row['Hedef 1']}  Hedef 2: {row['Hedef 2']}"
+            )
+            print(f"  Gerekçe: {row['Gerekçe']}")
+
+    log("Fırsat taraması tamamlandı.")
 
 
 if __name__ == "__main__":

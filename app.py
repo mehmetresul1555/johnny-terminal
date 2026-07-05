@@ -21,7 +21,13 @@ sys.path.append(str(BASE_DIR))
 
 import data_mapper  # noqa: E402
 from integrations import fintables_browser  # noqa: E402
-from scoring.johnny_score import OPTIONAL_COLUMNS, REQUIRED_COLUMNS, score_dataframe  # noqa: E402
+from scoring.johnny_score import (  # noqa: E402
+    NO_OPPORTUNITY_MESSAGE,
+    OPTIONAL_COLUMNS,
+    REQUIRED_COLUMNS,
+    filter_tradeable,
+    score_dataframe,
+)
 
 CONFIG_PATH = BASE_DIR / "config" / "watchlist.yaml"
 OUTPUTS_DIR = BASE_DIR / "outputs"
@@ -282,27 +288,40 @@ except ValueError as e:
 if kaynak == "Fintables (Tarayıcı Otomasyonu)" and st.session_state.get("fintables_df_ham") is not None:
     st.success("✅ Johnny Score hesaplandı. Top 3 hazır.")
 
-# --- Top 3 ---
-st.subheader("🏆 Günün En İyi 3 Adayı")
-top3 = sonuc.head(3)
-cols = st.columns(3)
-for i, (_, row) in enumerate(top3.iterrows()):
-    with cols[i]:
-        st.markdown(f"### {row['Hisse']}")
-        st.markdown(f"**{row['Durum']}** · {row['Johnny Score']:.0f} puan")
-        st.write(f"Fiyat: {row['Fiyat']}")
-        st.write(f"**Alım Aralığı:** {row['Alım Aralığı']}")
-        st.write(f"**Stop:** {row['Stop']}")
-        st.write(f"**Hedef 1:** {row['Hedef 1']}")
-        st.write(f"**Hedef 2:** {row['Hedef 2']}")
-        st.caption(row["Gerekçe"])
-        with st.expander("🔍 Johnny neden bu puanı verdi?"):
-            st.markdown(row["Neden"])
+# --- Trade edilebilir fırsatlar ---
+# v1.0 REVİZYON (kullanıcı isteği - "Johnny artık bir puanlama motoru
+# değil, bir TRADE ASİSTANI"): kullanıcıya ASLA "UZAK DUR" etiketli
+# hisseler burada gösterilmez - sonuc.head(3) yerine sadece gerçekten
+# işlem yapılabilir (AL/İZLE) adaylar (bkz. filter_tradeable) kullanılır.
+# Hiçbir aday bu seviyeye ulaşmıyorsa NO_OPPORTUNITY_MESSAGE gösterilir;
+# "en iyi kötü hisse" gibi bir sonuç asla sunulmaz.
+st.subheader("🏆 Bugünün Fırsatları")
+firsatlar = filter_tradeable(sonuc)
+if firsatlar.empty:
+    st.info(f"ℹ️ {NO_OPPORTUNITY_MESSAGE}")
+else:
+    top3 = firsatlar.head(3)
+    cols = st.columns(len(top3))
+    for i, (_, row) in enumerate(top3.iterrows()):
+        with cols[i]:
+            st.markdown(f"### {row['Hisse']}")
+            st.markdown(f"**{row['Durum']}** · {row['Johnny Score']:.0f} puan")
+            st.write(f"Fiyat: {row['Fiyat']}")
+            st.write(f"**Alım Aralığı:** {row['Alım Aralığı']}")
+            st.write(f"**Stop:** {row['Stop']}")
+            st.write(f"**Hedef 1:** {row['Hedef 1']}")
+            st.write(f"**Hedef 2:** {row['Hedef 2']}")
+            st.caption(row["Gerekçe"])
+            with st.expander("🔍 Johnny neden bu puanı verdi?"):
+                st.markdown(row["Neden"])
 
 st.divider()
 
 # --- Tam tablo ---
-st.subheader("📋 Tüm Adaylar")
+# NOT: bu tablo şeffaflık/araştırma amaçlıdır ve "UZAK DUR" adayları da
+# İÇEREBİLİR - yukarıdaki "Bugünün Fırsatları" bölümünün aksine bu bir
+# öneri listesi DEĞİLDİR, sadece taranan tüm adayların tam dökümüdür.
+st.subheader("📋 Tüm Adaylar (araştırma amaçlı - öneri değildir)")
 tablo_kolonlari = ["Hisse", "Fiyat", "Johnny Score", "Durum", "Alım Aralığı", "Stop", "Hedef 1", "Hedef 2", "Gerekçe"]
 st.dataframe(style_table(sonuc[tablo_kolonlari]), use_container_width=True, hide_index=True)
 

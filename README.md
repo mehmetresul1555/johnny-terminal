@@ -73,11 +73,13 @@ Eskiden ilk top_n aday DOĞRUDAN Radar momentum sıralamasından seçilip Tradin
 5. **Fundamental kalite süzgeci** (`scoring/fundamental_engine.fundamental_yeterlilik_kontrolu`): verisi çok eksik (`fundamental_min_dolu_alan`, varsayılan 4 alandan en az 2'si dolu) ya da skoru zayıf (`fundamental_min_skor_orani`, varsayılan skorun en az %25'i) olan adaylar havuzdan ELENİR. Eşikler bu turda çok katı kalıp HİÇBİR aday geçemezse, sistem çökmez — tüm havuzla best-effort devam edilir.
 6. Fundamental süzgecinden geçen adaylar için RSI, MACD (histogram), EMA20/50/200, ADX, ATR% **doğrudan TradingView'in herkese açık teknik analiz uç noktasından** (`integrations/tradingview_indicators.py`, `tradingview-ta` kütüphanesi) alınır — önce tek bir toplu istekle, o başarısız/0% olursa hisse başına tek tek denenerek.
 7. **Teknik veri süzgeci** (`teknik_veri_mevcut_mu`, `fintables.pre_screen.teknik_veri_zorunlu`, varsayılan açık): TradingView'de HİÇ bulunamayan (tüm göstergeleri boş dönen) adaylar "güçlü havuz"tan çıkarılır.
-8. **Final top_n seçimi**: önce güçlü havuzdan (fundamental + teknik süzgeçleri geçen, momentum skoruna göre sıralı) top_n aday seçilir. Yeterli aday kalmazsa, teknik verisi olmayan ama fundamental'i yeterli adaylarla **"düşük güven" (`_dusuk_guven`)** işaretiyle doldurulur — sistem asla çökmez ya da boş dönmez. Birleşen ham veri, mevcut Kolon Eşleştirme adımına gönderilir; oradan Johnny Score hesaplanır ve Top 3 gösterilir.
+8. **Final top_n seçimi**: önce güçlü havuzdan (fundamental + teknik süzgeçleri geçen) top_n aday seçilir. Yeterli aday kalmazsa, teknik verisi olmayan ama fundamental'i yeterli adaylarla **"düşük güven" (`_dusuk_guven`)** işaretiyle doldurulur — sistem asla çökmez ya da boş dönmez. Birleşen ham veri, mevcut Kolon Eşleştirme adımına gönderilir; oradan Johnny Score hesaplanır ve sadece işlem yapılabilir fırsatlar gösterilir (bkz. "Johnny bir trade asistanıdır" bölümü).
+
+   **v1.0 revizyonu (kullanıcı isteği - "Top 20 aday oluştururken amaç maksimum puan değil, gerçekten kaliteli adaylar olmalı"):** final top_n sıralaması eskiden HAM Radar momentumuna (`_on_eleme_skoru`: hacim + gün % + kısa vadeli getiri rank toplamı — bu skor sadece 40'lık kalite havuzunu seçmek için, teknik/temel veri çekilmeden ÖNCE hesaplanan kaba bir ön-sinyaldi) göre yapılıyordu. Bu, momentumu yüksek ama teknik+temel olarak zayıf bir adayın, momentumu düşük ama gerçekten kaliteli bir adayın ÖNÜNE geçmesine yol açabiliyordu. Artık final sıralama, o ana kadar toplanan GERÇEK teknik+fundamental veriyle hesaplanan bir Johnny Score ön-hesabına göre yapılır (`fintables_browser._gercek_kaliteye_gore_skorla`, `scoring/johnny_score.compute_total_score` ile aynı formülü kullanır). Sadece 40'lık kalite havuzunu seçmek için kullanılan ilk momentum ön-eleme (adım 3) değişmedi — bu adımın henüz teknik/temel veri toplanmadan önce olması kaçınılmaz (aksi halde 640 hissenin tamamı için TradingView/fundamental isteği atmak gerekirdi).
 
 Bir hissenin TradingView/fundamental verisi ağ hatası, bot koruması vb. yüzünden alınamazsa bu ayrı bir durumdur (alanlar None kalır, scoring nötr varsayımla devam eder) — (5) ve (7)'deki kalite süzgeçleri ise KASITLI olarak adayı tamamen havuzdan çıkarır, bu proje genelindeki "eksik veri = nötr puan" ilkesinin bilinçli bir istisnasıdır (sadece aday SEÇİMİ aşamasında).
 
-Her adım (Fintables Radar okundu, kaba filtre sonucu, kalite havuzu seçildi, {SEMBOL} temel/teknik veri okundu/okunamadı, fundamental/teknik süzgeç sonuçları, düşük güven doldurma uyarıları, Johnny Score hesaplandı, Top 3 hazır) buton altında canlı bir günlük olarak gösterilir.
+Her adım (Fintables Radar okundu, kaba filtre sonucu, kalite havuzu seçildi, {SEMBOL} temel/teknik veri okundu/okunamadı, fundamental/teknik süzgeç sonuçları, düşük güven doldurma uyarıları, Johnny Score hesaplandı, fırsat taraması tamamlandı) buton altında canlı bir günlük olarak gösterilir.
 
 **PASİF olan eski yöntem:** v1.0 FINAL'de RSI/MACD/EMA/ADX/ATR, Fintables'ın hisse detay/işlem ekranı sayfasındaki TradingView grafik widget'ının "legend" metin kutularından okunuyordu (`integrations/fintables_browser.py` içindeki `read_technical_indicators`, `fetch_technical_detail` vb.). Bu yöntem güvenilir bulunmadı: EMA20/EMA50/EMA200 gibi göstergeler kullanıcı grafiğe elle eklemediyse hiç görünmüyordu, ayrıca canvas/iframe tabanlı kırılgan bir DOM bağımlılığıydı. Bu fonksiyonlar geriye dönük referans/tekil test için dosyada duruyor ama `run_full_update()` artık bunları ÇAĞIRMIYOR.
 
@@ -360,8 +362,29 @@ UZAK DUR durumundaki hisseler için bu seviyeler hesaplanmaz (`-` gösterilir).
 
 Her hisse için hem kısa bir gerekçe cümlesi hem de "Johnny neden bu puanı
 verdi?" başlıklı, madde madde (taban analiz + tetiklenen kurallar) detaylı
-bir açıklama üretilir; arayüzde Top 3 kartlarının altında ve tam tablonun
+bir açıklama üretilir; arayüzde fırsat kartlarının altında ve tam tablonun
 altındaki genişletilebilir bölümde görüntülenir.
+
+### Johnny bir "trade asistanı"dır, bir puanlama tablosu değil
+
+**v1.0 revizyonu (kullanıcı isteği):** Johnny'nin görevi hisseleri
+sıralamak değil, GERÇEKTEN işlem yapılabilir fırsatları bulmaktır.
+Kullanıcıya asla "en iyi UZAK DUR" ya da "en yüksek puanlı ama yine de
+alma" gibi bir sonuç gösterilmez:
+
+- `scoring/johnny_score.filter_tradeable(sonuc)` — `score_dataframe()`
+  çıktısından SADECE Durum'u **AL** ya da **İZLE** olan satırları döner
+  (zaten Johnny Score'a göre azalan sırada).
+- Hiçbir aday bu seviyeye ulaşmıyorsa (`filter_tradeable` boş dönerse),
+  arayüzde/`test_full_flow.py` çıktısında `NO_OPPORTUNITY_MESSAGE`
+  ("Bugün işlem yapmaya değer güçlü bir fırsat bulamadım.") gösterilir —
+  boş bir liste ya da en iyi UZAK DUR'lar ASLA gösterilmez.
+- `app.py`'daki **"📋 Tüm Adaylar"** tablosu bunun istisnasıdır: bu,
+  taranan TÜM adayların şeffaflık/araştırma amaçlı tam dökümüdür (UZAK
+  DUR içerebilir) — bir öneri listesi değildir, ayrıca etiketlenmiştir.
+
+Bu davranış `scoring/johnny_score.py` içinde merkezi olarak
+uygulanır; hem `app.py` hem `test_full_flow.py` aynı fonksiyonu kullanır.
 
 ## Kolon Eşleştirme (Fintables ve diğer kaynaklar için)
 

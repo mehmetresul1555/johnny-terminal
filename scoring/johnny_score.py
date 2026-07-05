@@ -329,6 +329,36 @@ def determine_durum(total_score, thresholds):
     return "UZAK DUR"
 
 
+# v1.0 REVİZYON (kullanıcı isteği - "Johnny artık bir puanlama motoru
+# değil, bir TRADE ASİSTANI"): kullanıcıya ASLA "UZAK DUR" etiketli
+# hisseler Top 3/liste olarak gösterilmemeli - "en iyi kötü hisse" ya da
+# "en yüksek puanlı ama yine de alma" gibi bir sonuç Johnny'nin amacına
+# aykırıdır. Johnny'nin görevi kötü hisseleri sıralamak değil, GERÇEKTEN
+# işlem yapılabilir (AL ya da İZLE) fırsatları bulmaktır. Hiçbir aday bu
+# seviyeye ulaşmıyorsa, boş/kötü bir liste göstermek yerine NO_OPPORTUNITY_
+# MESSAGE kullanılır (bkz. filter_tradeable).
+NO_OPPORTUNITY_MESSAGE = "Bugün işlem yapmaya değer güçlü bir fırsat bulamadım."
+
+
+def filter_tradeable(sonuc_df):
+    """score_dataframe() çıktısından SADECE işlem yapılabilir (Durum'u
+    'UZAK DUR' OLMAYAN, yani 'AL' ya da 'İZLE') satırları döner.
+
+    sonuc_df zaten Johnny Score'a göre azalan sırada geldiği için (bkz.
+    score_dataframe), dönen sonuç da otomatik olarak azalan sıradadır.
+
+    Kullanıcıya Top 3/öne çıkan adaylar gösterilirken HER ZAMAN bu
+    fonksiyondan geçirilmiş veri kullanılmalı - ham sonuc_df.head(3)
+    KULLANILMAMALI (bu, hiçbir aday işlem yapılabilir olmasa bile en
+    "iyi" UZAK DUR'ları göstermeye devam eder, ki bu artık istenmiyor).
+
+    Returns:
+        pd.DataFrame: boş olabilir (hiçbir aday AL/İZLE değilse) - bu
+        durumda çağıran taraf NO_OPPORTUNITY_MESSAGE'ı göstermeli.
+    """
+    return sonuc_df[sonuc_df["Durum"] != "UZAK DUR"].reset_index(drop=True)
+
+
 def compute_trade_levels(fiyat, atr_pct, risk_cfg):
     """Alım aralığı, stop, hedef1 ve hedef2 seviyelerini hesaplar.
 

@@ -1867,6 +1867,67 @@ def fetch_technical_detail(ticker, config=None, headless=True, timeout_ms=30_000
     return sonuc
 
 
+def _gercek_kaliteye_gore_skorla(df, config):
+    """YENİ (kullanıcı isteği - "Johnny artık bir puanlama motoru değil,
+    bir TRADE ASİSTANI"): final top_n seçimi eskiden SADECE ham Radar
+    momentumuna (_on_eleme_skoru: hacim + gün % + kısa vadeli getiri rank
+    toplamı) göre yapılıyordu - bu skor fundamental/teknik veri çekilmeden
+    ÖNCE, sadece hangi 40 adayın detaylı analiz edileceğini seçmek için
+    hesaplanır. Ama o ana kadar zaten GERÇEK teknik (TradingView) ve
+    fundamental (F/K, PD/DD, ROE) veri toplanmış olmasına rağmen final
+    top_n seçimi hâlâ o ham momentum sırasına göre yapılıyordu - yani
+    "Top 20 aday oluştururken amaç maksimum puan değil, günlük trade için
+    gerçekten kaliteli adaylar olmalı" isteğiyle ÇELİŞEN bir durum vardı:
+    momentumu yüksek ama teknik+temel olarak zayıf bir aday, momentumu
+    daha düşük ama gerçekten kaliteli bir adayın ÖNÜNE geçebiliyordu.
+
+    Bu fonksiyon, elde zaten bulunan teknik+temel veriyle HER aday için
+    gerçek bir Johnny Score ön-hesabı yapar (data_mapper ile standart
+    kolonlara çevirip scoring/johnny_score.compute_total_score çağırarak)
+    ve final top_n seçimini artık BU skora göre sıralar. Bu, nihai
+    score_dataframe() çağrısıyla (app.py/test_full_flow.py) AYNI
+    formülü kullanır - sadece burada, hangi adayların top_n'e gireceğine
+    karar vermek için ERKEN bir kez daha çalıştırılır (score_dataframe
+    sonrasında zaten tekrar, resmi olarak hesaplanacak - bu tekrar
+    hesaplama ucuzdur, ~20-40 aday için önemsiz bir maliyettir).
+
+    Veri eksik/bozuksa (örn. bir hisse için hiçbir teknik/temel alan
+    yoksa) skor hesaplaması ASLA çökmez - compute_total_score zaten
+    eksik alanları nötr varsayımlarla ele alır (bkz. scoring modülleri).
+
+    Returns:
+        pd.DataFrame: df'in bir kopyası + "_gercek_kalite_skoru" kolonu
+        (yüksek = daha kaliteli aday). df boşsa değişmeden döner.
+    """
+    df = df.copy()
+    if df.empty:
+        df["_gercek_kalite_skoru"] = pd.Series(dtype=float)
+        return df
+
+    import data_mapper as _data_mapper_mod
+    from scoring import johnny_score as _johnny_score_mod
+
+    oneri = _data_mapper_mod.suggest_mapping(df.columns)
+    df_std = _data_mapper_mod.apply_mapping(df, oneri)
+    base_damping = config.get("scoring", {}).get(
+        "base_damping", _johnny_score_mod.DEFAULT_BASE_DAMPING
+    )
+
+    skorlar = []
+    for i in range(len(df_std)):
+        try:
+            satir = df_std.iloc[i]
+            sonuc = _johnny_score_mod.compute_total_score(satir, base_damping=base_damping)
+            skorlar.append(sonuc["total"])
+        except Exception:
+            # Bozuk/eksik veri final sıralamayı çökertmesin - bu aday en
+            # düşük öncelikle (0 puan) değerlendirilir, elenmez.
+            skorlar.append(0.0)
+
+    df["_gercek_kalite_skoru"] = skorlar
+    return df
+
+
 def run_full_update(config, on_progress=None):
     """Johnny Terminal v1.0 FINAL REVİZYONU akışı: Radar oku -> ön eleme
     (ilk N aday) -> bu adayların RSI/MACD/EMA20/EMA50/EMA200/ADX/ATR
@@ -2288,11 +2349,22 @@ def run_full_update(config, on_progress=None):
         guclu_havuz = havuz_teknikli.copy()
         zayif_havuz = havuz_teknikli.iloc[0:0].copy()
 
-    # 8) Final top_n seçimi: önce GÜÇLÜ havuzdan (orijinal momentum
-    # skoruna göre sıralı), yetmezse ZAYIF havuzdan (teknik verisi
-    # olmayan ama fundamental'i yeterli) DÜŞÜK GÜVEN işaretiyle doldurulur.
-    guclu_havuz = guclu_havuz.sort_values("_on_eleme_skoru", ascending=False)
-    zayif_havuz = zayif_havuz.sort_values("_on_eleme_skoru", ascending=False)
+    # 8) Final top_n seçimi: önce GÜÇLÜ havuzdan, yetmezse ZAYIF havuzdan
+    # (teknik verisi olmayan ama fundamental'i yeterli) DÜŞÜK GÜVEN
+    # işaretiyle doldurulur.
+    #
+    # YENİ (kullanıcı isteği - "Top 20 aday oluştururken amaç maksimum
+    # puan değil; günlük trade için gerçekten kaliteli adaylar olmalı"):
+    # sıralama artık ham Radar momentumu (_on_eleme_skoru - bu sadece
+    # 40'lık kalite havuzunu seçmek için, teknik/temel veri çekilmeden
+    # ÖNCE kullanılan kaba bir ön-sinyaldi) yerine, o ana kadar toplanan
+    # GERÇEK teknik+temel veriyle hesaplanan Johnny Score'a göre yapılır
+    # (bkz. _gercek_kaliteye_gore_skorla). Böylece final top_n, "en yüksek
+    # momentumlu" değil "gerçekten en kaliteli" adaylardan oluşur.
+    guclu_havuz = _gercek_kaliteye_gore_skorla(guclu_havuz, config)
+    zayif_havuz = _gercek_kaliteye_gore_skorla(zayif_havuz, config)
+    guclu_havuz = guclu_havuz.sort_values("_gercek_kalite_skoru", ascending=False)
+    zayif_havuz = zayif_havuz.sort_values("_gercek_kalite_skoru", ascending=False)
 
     if len(guclu_havuz) >= top_n:
         secilenler = guclu_havuz.head(top_n).copy()
@@ -2317,7 +2389,7 @@ def run_full_update(config, on_progress=None):
                 "olabilir."
             )
 
-    secilenler = secilenler.drop(columns=["_anahtar"], errors="ignore")
+    secilenler = secilenler.drop(columns=["_anahtar", "_gercek_kalite_skoru"], errors="ignore")
     df_ham = secilenler.reset_index(drop=True)
     df_ham["hisse"] = df_ham[hisse_kolonu]
 
