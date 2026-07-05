@@ -124,7 +124,43 @@ def _ham_scanner_teshisi(tv_semboller, screener, interval, timeout):
     except Exception as e:
         ref_sonuc = f"Referans sorgusu da başarısız oldu ({type(e).__name__}): {e}"
 
-    return f"{tr_sonuc} | {ref_sonuc}"
+    # BUG TEŞHİSİ (3. adım): Türkiye sorgusu 0 sonuç dönerken referans
+    # (NASDAQ:AAPL) sorgusu başarılıysa (canlı testte TAM OLARAK bu
+    # görüldü), sorun genel değil - "turkey" screener'ı ya da "BIST"
+    # borsa koduna özgü. Bunu KÖR KÖRÜNE (farklı screener/exchange
+    # adları deneyerek) araştırmak yerine, TradingView'in KENDİ herkese
+    # açık sembol arama uç noktasını (`TradingView.search`) kullanarak
+    # başarısız olan sembollerden birini DOĞRUDAN sorguluyoruz - bu bize
+    # TradingView'in bu hisse için GÜNCEL OLARAK hangi borsa/screener
+    # kodunu kullandığını (BIST hâlâ geçerli mi, yoksa yeniden mi
+    # adlandırılmış) somut olarak gösterir.
+    ilk_orijinal_sembol = None
+    if tv_semboller:
+        ilk_orijinal_sembol = tv_semboller[0].split(":", 1)[-1]
+    arama_sonucu = "Sembol arama teşhisi atlandı (aday sembol yok)."
+    if ilk_orijinal_sembol:
+        try:
+            from tradingview_ta import TradingView
+
+            bulunanlar = TradingView.search(ilk_orijinal_sembol, "stock")
+            if bulunanlar:
+                arama_sonucu = (
+                    f"TradingView sembol araması ({ilk_orijinal_sembol!r}) "
+                    f"sonucu: {bulunanlar[:5]!r}"
+                )
+            else:
+                arama_sonucu = (
+                    f"TradingView sembol araması ({ilk_orijinal_sembol!r}) "
+                    "SONUÇ DÖNMEDİ (bu sembol TradingView'de hiç bulunamıyor "
+                    "olabilir, ya da arama uç noktası da erişilemez durumda)."
+                )
+        except Exception as e:
+            arama_sonucu = (
+                f"TradingView sembol araması da başarısız oldu "
+                f"({type(e).__name__}): {e}"
+            )
+
+    return f"{tr_sonuc} | {ref_sonuc} | {arama_sonucu}"
 
 
 def _ensure_tradingview_ta():
