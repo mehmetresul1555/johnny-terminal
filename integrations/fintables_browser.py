@@ -591,6 +591,33 @@ def _radar_sayfasindan_df_olustur(
 
     hisse_kolon_index = _radar_hisse_kolon_indexi_bul(basliklar)
 
+    # BUG FIX: tablo kabuğu ve hatta ilk <tr> elementleri DOM'da
+    # göründükten SONRA bile satırlar bir süre React'in yükleme
+    # iskeleti (skeleton/placeholder - başlık sayısıyla eşleşmeyen
+    # geçici satırlar) olabilir; gerçek veri biraz sonra gelir. Ana
+    # döngüye girmeden önce en az BİR satırın başlık sayısıyla
+    # eşleşmesini kısa aralıklarla bekleriz; zaman aşımına uğrarsa
+    # (tablo gerçekten farklı yapıdaysa) sessizce vazgeçilir - ana
+    # döngü zaten kendi deneme/scroll mantığıyla devam edecektir.
+    for _ in range(20):
+        try:
+            _on_kontrol = page.locator(
+                f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr"
+            )
+            _eslesme_bulundu = False
+            for _i in range(_on_kontrol.count()):
+                if len(_on_kontrol.nth(_i).locator("td").all_inner_texts()) == len(basliklar):
+                    _eslesme_bulundu = True
+                    break
+            if _eslesme_bulundu:
+                break
+        except Exception:
+            pass
+        try:
+            page.wait_for_timeout(300)
+        except Exception:
+            pass
+
     # Tüm satırları hisse koduna göre biriktiren sözlük. Virtual
     # scrolling nedeniyle DOM'daki satırlar tur tur DEĞİŞEBİLİR/
     # kaybolabilir; bu yüzden okuma tek seferlik değil, aşağıdaki
@@ -603,15 +630,22 @@ def _radar_sayfasindan_df_olustur(
     onceki_benzersiz_sayi = -1
     sabit_kalma_sayaci = 0
     scroll_no = 0
+    # Tanı amaçlı: hiç veri bulunamazsa hata mesajına eklenecek, son
+    # turda gerçekte DOM'da ne görüldüğüne dair bilgiler.
+    son_satir_sayisi = 0
+    son_ornek_hucreler = None
 
     while True:
         satir_locator = page.locator(
             f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr"
         )
         satir_sayisi = satir_locator.count()
+        son_satir_sayisi = satir_sayisi
 
         for i in range(satir_sayisi):
             hucreler = [h.strip() for h in satir_locator.nth(i).locator("td").all_inner_texts()]
+            if i == 0:
+                son_ornek_hucreler = hucreler
             if len(hucreler) != len(basliklar):
                 toplam_uyumsuz_satir += 1
                 continue
@@ -650,9 +684,29 @@ def _radar_sayfasindan_df_olustur(
     veri_satirlari = list(gorulen_hisseler.values())
 
     if not veri_satirlari:
+        # BUG FIX: önceden bu hata tek satırlık, teşhis edilemeyen bir
+        # mesajdı ("Tablodan okunabilen veri satırı bulunamadı"). Artık
+        # DOM'da gerçekte ne görüldüğünü (ham satır sayısı, beklenen
+        # kolon sayısı/adları, son görülen bir örnek satırın ham
+        # hücreleri, kaç satırın uyuşmazlık nedeniyle atlandığı) da
+        # içeriyor - böylece bir sonraki hata canlı DOM'a tekrar
+        # bakmadan da kaynağı işaret edebilir.
+        detay = (
+            f"Son turda DOM'da bulunan ham satır sayısı: {son_satir_sayisi}. "
+            f"Beklenen kolon sayısı: {len(basliklar)} (başlıklar: {basliklar}). "
+        )
+        if son_ornek_hucreler is not None:
+            detay += f"Son turda görülen örnek satırın ham hücreleri: {son_ornek_hucreler}. "
+        if toplam_uyumsuz_satir:
+            detay += (
+                f"Toplam {toplam_uyumsuz_satir} satır başlık/hücre sayısı "
+                "uyuşmadığı için atlandı - bu genelde tablo hâlâ yükleme "
+                "iskeletini (skeleton/placeholder) gösteriyorken okunmaya "
+                "çalışıldığına işaret eder."
+            )
         raise FintablesError(
             f"Tablodan okunabilen veri satırı bulunamadı ({scroll_no} "
-            "scroll denemesi sonunda)."
+            f"scroll denemesi sonunda). {detay}"
         )
 
     if toplam_uyumsuz_satir:
