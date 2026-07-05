@@ -62,17 +62,22 @@ oturumu üzerinden ilgili sayfalar açılıp okunur.
    dosyasına kaydedilir — bu dosya asla git'e commit'lenmez
    (`.gitignore`'da), asla bir yere gönderilmez.
 
-**v1.0 FINAL REVİZYONU akış ("🔄 Fintables'tan Güncelle" butonuna her bastığınızda):**
+**v1.0 REVİZYON 2 akışı ("🔄 Fintables'tan Güncelle" butonuna her bastığınızda) — "kalite havuzu" pipeline'ı:**
+
+Eskiden ilk top_n aday DOĞRUDAN Radar momentum sıralamasından seçilip TradingView/fundamental verisi SONRADAN, sadece bilgi amaçlı ekleniyordu — bu, veri akışı eksik/zayıf/yeni hisselerin de ilk 20'ye girmesine yol açabiliyordu. Johnny'nin amacı **"en yüksek uçuk getirili hisseler" değil, "verisi güvenilir, teknik + temel olarak kaliteli günlük trade adayları"** bulmaktır. Artık top_n'den DAHA BÜYÜK bir "kalite havuzu" oluşturulur ve final top_n, bu havuzun İÇİNDEN fundamental kalite + TradingView teknik veri mevcudiyeti süzgeçlerini geçen adaylardan seçilir:
 
 1. Kayıtlı oturumla Hisse Radar ana tablosu (`https://fintables.com/radar/hisse-senetleri`) açılıp okunur (~640 hisse). Tarayıcı SADECE bu adım için kullanılır.
-2. Radar verisiyle basit, şeffaf bir **ön eleme** yapılır (`scoring/pre_screen.py`) — hacim, günlük değişim ve kısa vadeli getiri kolonlarının percentile rank ortalamasına göre.
-3. Ön elemeden geçen **ilk 20 aday** (`config/watchlist.yaml` -> `fintables.pre_screen.top_n`) seçilir. Radar okuma bitince tarayıcı hemen kapatılır.
-4. Bu 20 aday için RSI, MACD (histogram), EMA20/50/200, ADX, ATR% **Fintables'tan değil doğrudan TradingView'in herkese açık teknik analiz uç noktasından** (`integrations/tradingview_indicators.py`, `tradingview-ta` kütüphanesi) alınır — önce tek bir toplu istekle, o başarısız olursa hisse başına tek tek denenerek. Giriş/hesap/tarayıcı gerekmez, basit bir HTTP isteğidir.
-5. TradingView'den veri alınamayan bir hisse için (sembol bulunamadı, zaman aşımı vb.) o hissenin teknik alanları **None** bırakılır ve loglanır; hisse yine de listede kalır, ATLANMAZ.
-6. Aynı 20 aday için F/K, PD/DD, ROE (varsa Net Borç/FAVÖK), Fintables'ın **"Piyasa Çarpanları" ve "Rasyo Analiz Tablosu"** sayfalarından okunmaya çalışılır (bkz. aşağıda "Fundamental veri kaynağı"). Bot koruması çıkarsa ya da veri okunamazsa bu alanlar **None** bırakılır; hisse yine ATLANMAZ.
-7. Birleşen ham veri, mevcut Kolon Eşleştirme adımına gönderilir; oradan Johnny Score hesaplanır ve Top 3 gösterilir.
+2. **Kaba filtre** (`scoring/pre_screen.kaba_filtrele`): çok düşük hacimli ya da fiyat/hacim verisi eksik/anlamsız olan hisseler AÇIKÇA ve KESİN olarak elenir (`fintables.pre_screen.min_hacim_percentile`, varsayılan en düşük hacimli %20).
+3. **Kalite havuzu**: kalan hisselerden, momentum sinyaline göre `top_n * havuz_carpani` büyüklüğünde bir aday havuzu seçilir (`fintables.pre_screen.top_n`, `havuz_carpani`; varsayılan 20 x 2 = 40). Radar okuma bitince tarayıcı hemen kapatılır.
+4. Havuzdaki HER aday için F/K, PD/DD, ROE (varsa Net Borç/FAVÖK) Fintables'ın **"Piyasa Çarpanları" ve "Rasyo Analiz Tablosu"** sayfalarından okunmaya çalışılır (bkz. aşağıda "Fundamental veri kaynağı"). Bot koruması çıkarsa ya da veri okunamazsa bu alanlar **None** bırakılır.
+5. **Fundamental kalite süzgeci** (`scoring/fundamental_engine.fundamental_yeterlilik_kontrolu`): verisi çok eksik (`fundamental_min_dolu_alan`, varsayılan 4 alandan en az 2'si dolu) ya da skoru zayıf (`fundamental_min_skor_orani`, varsayılan skorun en az %25'i) olan adaylar havuzdan ELENİR. Eşikler bu turda çok katı kalıp HİÇBİR aday geçemezse, sistem çökmez — tüm havuzla best-effort devam edilir.
+6. Fundamental süzgecinden geçen adaylar için RSI, MACD (histogram), EMA20/50/200, ADX, ATR% **doğrudan TradingView'in herkese açık teknik analiz uç noktasından** (`integrations/tradingview_indicators.py`, `tradingview-ta` kütüphanesi) alınır — önce tek bir toplu istekle, o başarısız/0% olursa hisse başına tek tek denenerek.
+7. **Teknik veri süzgeci** (`teknik_veri_mevcut_mu`, `fintables.pre_screen.teknik_veri_zorunlu`, varsayılan açık): TradingView'de HİÇ bulunamayan (tüm göstergeleri boş dönen) adaylar "güçlü havuz"tan çıkarılır.
+8. **Final top_n seçimi**: önce güçlü havuzdan (fundamental + teknik süzgeçleri geçen, momentum skoruna göre sıralı) top_n aday seçilir. Yeterli aday kalmazsa, teknik verisi olmayan ama fundamental'i yeterli adaylarla **"düşük güven" (`_dusuk_guven`)** işaretiyle doldurulur — sistem asla çökmez ya da boş dönmez. Birleşen ham veri, mevcut Kolon Eşleştirme adımına gönderilir; oradan Johnny Score hesaplanır ve Top 3 gösterilir.
 
-Her adım (Fintables Radar okundu, ilk 20 aday seçildi, TradingView {SEMBOL} teknik veri alındı/alınamadı, {SEMBOL} temel veriler okundu/okunamadı, teknik ve fundamental veriler birleştirildi, Johnny Score hesaplandı, Top 3 hazır) buton altında canlı bir günlük olarak gösterilir.
+Bir hissenin TradingView/fundamental verisi ağ hatası, bot koruması vb. yüzünden alınamazsa bu ayrı bir durumdur (alanlar None kalır, scoring nötr varsayımla devam eder) — (5) ve (7)'deki kalite süzgeçleri ise KASITLI olarak adayı tamamen havuzdan çıkarır, bu proje genelindeki "eksik veri = nötr puan" ilkesinin bilinçli bir istisnasıdır (sadece aday SEÇİMİ aşamasında).
+
+Her adım (Fintables Radar okundu, kaba filtre sonucu, kalite havuzu seçildi, {SEMBOL} temel/teknik veri okundu/okunamadı, fundamental/teknik süzgeç sonuçları, düşük güven doldurma uyarıları, Johnny Score hesaplandı, Top 3 hazır) buton altında canlı bir günlük olarak gösterilir.
 
 **PASİF olan eski yöntem:** v1.0 FINAL'de RSI/MACD/EMA/ADX/ATR, Fintables'ın hisse detay/işlem ekranı sayfasındaki TradingView grafik widget'ının "legend" metin kutularından okunuyordu (`integrations/fintables_browser.py` içindeki `read_technical_indicators`, `fetch_technical_detail` vb.). Bu yöntem güvenilir bulunmadı: EMA20/EMA50/EMA200 gibi göstergeler kullanıcı grafiğe elle eklemediyse hiç görünmüyordu, ayrıca canvas/iframe tabanlı kırılgan bir DOM bağımlılığıydı. Bu fonksiyonlar geriye dönük referans/tekil test için dosyada duruyor ama `run_full_update()` artık bunları ÇAĞIRMIYOR.
 

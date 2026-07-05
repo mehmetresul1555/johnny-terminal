@@ -207,6 +207,30 @@ def normalize_bist_symbol(symbol, exchange=DEFAULT_EXCHANGE):
     return f"{exchange}:{sembol_temiz}"
 
 
+TEKNIK_ALANLAR = ["rsi", "macd_signal", "ema20", "ema50", "ema200", "adx", "atr_pct"]
+
+
+def _bos_mu(deger):
+    """None ya da NaN ise True döner (pandas/plain dict her ikisiyle de
+    çalışır)."""
+    if deger is None:
+        return True
+    try:
+        return deger != deger  # NaN kontrolü (float('nan') != float('nan'))
+    except Exception:
+        return False
+
+
+def teknik_veri_mevcut_mu(row):
+    """YENİ ÖZELLİK (kullanıcı isteği): bir hissenin TradingView teknik
+    göstergelerinden (rsi/macd_signal/ema20/ema50/ema200/adx/atr_pct) EN
+    AZ BİRİNİN dolu olup olmadığını kontrol eder. Bu, "TradingView'den
+    teknik veri alınamıyorsa o hisseyi ilk N'e alma" filtresinde
+    kullanılır - TÜM alanlar boşsa (TradingView bu sembolü hiç
+    tanımıyorsa) hisse "teknik veri yok" kabul edilir."""
+    return any(not _bos_mu(row.get(alan)) for alan in TEKNIK_ALANLAR)
+
+
 def _analysis_to_dict(analysis, hisse):
     """Bir `tradingview_ta` Analysis nesnesini (veya None'ı) Johnny'nin
     standart teknik kolonlarına çevirir.

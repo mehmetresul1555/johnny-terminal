@@ -125,6 +125,142 @@ def _index_benzeri_kolon_mu(sayisal_seri, toplam_satir):
     )
 
 
+# YENİ ÖZELLİK (kullanıcı isteği - kaba filtre): Radar'ın thead'i genelde
+# SADECE 1-2 gerçek başlık sağlıyor ('#' ve bazen bir tane daha); geri
+# kalan kolonlar otomatik 'Kolon_N' adını alıyor (bkz.
+# integrations/fintables_browser.py şema tespiti) - bu yüzden hacim/gün/
+# fiyat kolonları İSİMDEN çoğu zaman bulunamıyor. AMA bu oturumdaki
+# TÜM canlı testlerde tekrar tekrar doğrulanan sabit bir örüntü var:
+# Radar'ın 13 kolonlu satırlarında kolon SIRASI HER ZAMAN aynı:
+#   [0]=# (sıra no), [1]=Hisse, [2]=Fiyat, [3]=Gün % değişim,
+#   [4]=Hacim, [5..12]=çeşitli vadeli Getiri yüzdeleri.
+# Bu POZİSYONEL bilgi, isim-tabanlı arama başarısız olduğunda güvenilir
+# bir yedek olarak kullanılır - SADECE otomatik üretilmiş ('Kolon_N' ya
+# da '#' gibi) isimler için; gerçek/tanınabilir bir isim varsa ASLA
+# üzerine yazılmaz.
+RADAR_POZISYONEL_TOPLAM_KOLON = 13
+RADAR_POZISYONEL_INDEKS = {"fiyat": 2, "gun": 3, "hacim": 4}
+
+
+def _isim_otomatik_uretilmis_mi(kolon_adi):
+    """Bir kolon adının 'Kolon_N' (otomatik üretilmiş) ya da '#' olup
+    olmadığını kontrol eder - _radar_sayfasindan_df_olustur'un ürettiği
+    isimlerle birebir eşleşir."""
+    if kolon_adi == "#":
+        return True
+    return bool(re.match(r"^Kolon_\d+$", str(kolon_adi)))
+
+
+def _pozisyonel_kolon_bul(columns, anahtar):
+    """İsim-tabanlı arama başarısız olduğunda, Radar'ın bilinen SABİT
+    13-kolonlu düzenine göre (bkz. RADAR_POZISYONEL_INDEKS) ilgili
+    kolonu POZİSYONA göre bulur. Kolon sayısı 13 değilse ya da o
+    pozisyondaki isim otomatik üretilmiş GÖRÜNMÜYORSA (yani gerçek,
+    tanınabilir bir isimse - bu durumda isim-tabanlı arama zaten
+    başarılı olurdu, buraya hiç gelinmezdi ama yine de güvenlik için
+    kontrol edilir) None döner."""
+    columns = list(columns)
+    if len(columns) != RADAR_POZISYONEL_TOPLAM_KOLON:
+        return None
+    indeks = RADAR_POZISYONEL_INDEKS.get(anahtar)
+    if indeks is None or indeks >= len(columns):
+        return None
+    aday = columns[indeks]
+    if not _isim_otomatik_uretilmis_mi(aday):
+        return None
+    return aday
+
+
+def kaba_filtrele(df_radar, hisse_kolonu=None, min_hacim_percentile=0.20, on_progress=None):
+    """YENİ ÖZELLİK (kullanıcı isteği): ön elemeye (select_top_candidates)
+    girmeden ÖNCE, Radar'ın ~640 satırından çok düşük hacimli ya da
+    fiyat/hacim verisi anlamsız/eksik olan satırları AÇIKÇA VE KESİN
+    OLARAK hariç tutar ("sert" eleme). Önceden bu tür satırlar sadece
+    düşük bir percentile rank alıp elenmeye ÇALIŞILIYORDU ("yumuşak"
+    eleme, yine de teorik olarak seçilebilirlerdi); artık tamamen
+    havuzun dışında bırakılıyorlar.
+
+    Fiyat/hacim kolonu (isimden ya da - bulunamazsa - Radar'ın bilinen
+    sabit kolon sırasından, bkz. _pozisyonel_kolon_bul) TESPİT
+    EDİLEMEZSE, bu filtre GÜVENLİ ŞEKİLDE ATLANIR (df_radar değişmeden
+    döner) - asla çökmez, asla yanlış bir kolonu filtrelemeye çalışmaz.
+
+    Args:
+        df_radar: fetch_radar_table() çıktısı (ham DataFrame)
+        hisse_kolonu: hisse kodu kolonu (biliniyorsa; fiyat/hacim
+            aramasında hariç tutulur, isim-tabanlı yanlış eşleşmeyi
+            önlemek için)
+        min_hacim_percentile: hacme göre alt yüzdelik dilim eşiği
+            (varsayılan 0.20 = en düşük hacimli %20 hariç tutulur).
+            0 ya da None verilirse bu percentile-tabanlı adım atlanır
+            (sadece eksik/sıfır hacim/fiyat filtrelenir).
+        on_progress: opsiyonel callable(str) - kaç satırın/hangi
+            nedenle elendiğini loglar; kendi içinde hata fırlatırsa
+            yok sayılır (akışı bozmaz).
+
+    Returns:
+        pd.DataFrame: filtrelenmiş DataFrame (index sıfırlanmış).
+    """
+    def _bildir(mesaj):
+        if on_progress:
+            try:
+                on_progress(mesaj)
+            except Exception:
+                pass
+
+    df = df_radar.copy()
+    baslangic_sayisi = len(df)
+    haric = [c for c in [hisse_kolonu, "#"] if c]
+
+    fiyat_kolonu = _kolon_bul(df.columns, ["fiyat"], haric=haric) or _pozisyonel_kolon_bul(df.columns, "fiyat")
+    hacim_kolonu = _kolon_bul(df.columns, ["hacim"], haric=haric) or _pozisyonel_kolon_bul(df.columns, "hacim")
+
+    if fiyat_kolonu is None and hacim_kolonu is None:
+        _bildir(
+            "Bilgi: kaba filtre atlandı - fiyat/hacim kolonu (isimden ya "
+            "da bilinen kolon sırasından) tespit edilemedi."
+        )
+        return df.reset_index(drop=True)
+
+    if fiyat_kolonu is not None and fiyat_kolonu in df.columns:
+        fiyat_sayisal = df[fiyat_kolonu].map(_sayiya_cevir)
+        oncesi = len(df)
+        df = df[(fiyat_sayisal.notna() & (fiyat_sayisal > 0)).values]
+        elenen = oncesi - len(df)
+        if elenen:
+            _bildir(f"Kaba filtre: {elenen} hisse fiyat verisi eksik/anlamsız olduğu için elendi.")
+
+    if hacim_kolonu is not None and hacim_kolonu in df.columns:
+        hacim_sayisal = df[hacim_kolonu].map(_sayiya_cevir)
+        oncesi = len(df)
+        gecerli_maske = (hacim_sayisal.notna() & (hacim_sayisal > 0)).values
+        df = df[gecerli_maske]
+        elenen = oncesi - len(df)
+        if elenen:
+            _bildir(f"Kaba filtre: {elenen} hisse hacim verisi eksik/sıfır olduğu için elendi.")
+
+        if min_hacim_percentile and 0 < min_hacim_percentile < 1 and len(df) > 0:
+            hacim_sayisal_guncel = df[hacim_kolonu].map(_sayiya_cevir)
+            esik_deger = hacim_sayisal_guncel.quantile(min_hacim_percentile)
+            oncesi = len(df)
+            df = df[(hacim_sayisal_guncel >= esik_deger).values]
+            elenen = oncesi - len(df)
+            if elenen:
+                _bildir(
+                    f"Kaba filtre: en düşük hacimli %{int(min_hacim_percentile * 100)} "
+                    f"({elenen} hisse) elendi."
+                )
+
+    toplam_elenen = baslangic_sayisi - len(df)
+    if toplam_elenen:
+        _bildir(
+            f"Kaba filtre tamamlandı: {baslangic_sayisi} hisseden "
+            f"{toplam_elenen} tanesi elendi, {len(df)} hisse kaldı."
+        )
+
+    return df.reset_index(drop=True)
+
+
 def _rank_normalize(seri):
     """Bir sayısal pandas Series'i 0-1 arası percentile rank'e çevirir.
     NaN değerler en düşük (0) kabul edilir (eksik veri ön elemede
@@ -184,15 +320,27 @@ def select_top_candidates(df_radar, top_n=DEFAULT_TOP_N, hisse_kolonu=None):
     # tespitle (isim ne olursa olsun) ayrıca korunuyoruz.
     haric_kolonlar = [hisse_kolonu, "#"]
 
-    hacim_kolonu = _kolon_bul(df.columns, ["hacim"], haric=haric_kolonlar)
-    gun_kolonu = _kolon_bul(df.columns, ["gun"], haric=haric_kolonlar)
+    # YENİ ÖZELLİK: isim-tabanlı arama başarısız olursa (Radar'ın thead'i
+    # genelde gerçek kolon adlarını sağlamıyor - bkz. _pozisyonel_kolon_bul
+    # docstring'i), Radar'ın bilinen SABİT kolon sırasına göre pozisyonel
+    # yedek denenir. Bu, "_on_eleme_skoru"nun rastgele/genel bir sayısal
+    # kolon karışımı yerine GERÇEKTEN hacim/gün değişimine dayanmasını
+    # sağlar.
+    hacim_kolonu = _kolon_bul(df.columns, ["hacim"], haric=haric_kolonlar) or _pozisyonel_kolon_bul(df.columns, "hacim")
+    gun_kolonu = _kolon_bul(df.columns, ["gun"], haric=haric_kolonlar) or _pozisyonel_kolon_bul(df.columns, "gun")
     getiri_kolonlari = [
         c for c in df.columns
         if c not in (hisse_kolonu, hacim_kolonu, gun_kolonu, "#") and "getiri" in _normalize(c)
     ]
     # En kısa vadeli getiri kolonunu tercih et (genelde en momentum-benzeri
     # sinyal); Fintables kolon sırası genelde kısa->uzun vade şeklindedir.
+    # İsim-tabanlı hiç "getiri" bulunamazsa (yine thead eksikliği nedeniyle)
+    # Radar'ın bilinen sabit sırasında ilk getiri kolonu (index 5) denenir.
     kisa_getiri_kolonu = getiri_kolonlari[0] if getiri_kolonlari else None
+    if kisa_getiri_kolonu is None and len(df.columns) == RADAR_POZISYONEL_TOPLAM_KOLON:
+        aday = df.columns[5]
+        if _isim_otomatik_uretilmis_mi(aday) and aday not in (hisse_kolonu, hacim_kolonu, gun_kolonu, "#"):
+            kisa_getiri_kolonu = aday
 
     kullanilan_kolonlar = [c for c in [hacim_kolonu, gun_kolonu, kisa_getiri_kolonu] if c]
 

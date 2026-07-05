@@ -86,14 +86,37 @@ fintables:
     # scrolling bileşeninin yeni satırları render etmesi için.
     bekleme_ms: 400
 
-  # v1.0 FINAL "final akış": Radar'daki ~640 hisse TAMAMEN okunduktan
-  # sonra basit bir ön elemeyle (bkz. scoring/pre_screen.py) ilk top_n
-  # aday seçilir; SADECE bu adayların teknik/fundamental detayına
-  # girilir (640 hissenin tamamına değil). Teknik veri Fintables'tan
-  # değil TradingView'den geliyor (bkz. aşağıdaki tradingview: bloğu ve
-  # integrations/tradingview_indicators.py).
+  # v1.0 REVİZYON 2 (kullanıcı isteği - "Johnny pipeline düzeltmesi"):
+  # Radar'daki ~640 hisse TAMAMEN okunduktan sonra top_n'den DAHA BÜYÜK
+  # bir "kalite havuzu" (top_n * havuz_carpani) seçilir; final top_n bu
+  # havuzun İÇİNDEN, fundamental kalite + TradingView teknik veri
+  # mevcudiyeti süzgeçlerini geçen adaylardan seçilir - amaç "en yüksek
+  # uçuk getirili" değil "verisi güvenilir, kaliteli günlük trade
+  # adayları" bulmaktır (bkz. integrations/fintables_browser.py ->
+  # run_full_update docstring'i).
   pre_screen:
     top_n: 20
+    # Kalite havuzu büyüklüğü top_n * havuz_carpani olur (örn. 20*2=40).
+    # Daha büyük bir değer, fundamental/teknik süzgeçlerinden geçecek
+    # daha fazla aday olması ihtimalini artırır AMA fundamental veri
+    # çekme adımı (Fintables tarayıcı otomasyonu, hisse başına birkaç
+    # saniye) daha uzun sürer - dikkatli artırın.
+    havuz_carpani: 2
+    # Kaba filtre: Radar'ın en düşük hacimli bu yüzdelik dilimi (0-1
+    # arası) havuza girmeden ÖNCE tamamen elenir (çok düşük hacimli/
+    # işlem yapılması güç hisseleri dışlamak için).
+    min_hacim_percentile: 0.20
+    # Fundamental kalite süzgeci: F/K, PD/DD, ROE, Net Borç/FAVÖK
+    # alanlarından (4 alan) en az bu kadarı DOLU olmalı; aksi halde
+    # "verisi çok eksik" kabul edilip elenir.
+    fundamental_min_dolu_alan: 2
+    # Fundamental kalite süzgeci: fundamental skor (0-20), MAX_SCORE'un
+    # bu oranından (0-1 arası) DÜŞÜKSE "zayıf" kabul edilip elenir.
+    fundamental_min_skor_orani: 0.25
+    # true ise TradingView'de HİÇ teknik veri bulunamayan adaylar
+    # elenir (yeterli aday kalmazsa en iyi kalanlarla "düşük güven"
+    # işaretiyle doldurulur - sistem asla çökmez/boş dönmez).
+    teknik_veri_zorunlu: true
 
   # v1.0 FINAL REVİZYONU: RSI/MACD/EMA/ADX/ATR değerlerini Fintables'ın
   # hisse detay sayfasındaki TradingView grafiğinin "legend" metin

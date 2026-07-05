@@ -101,6 +101,59 @@ def _net_debt_score(net_borc_favok):
     return _clip(5 - net_borc_favok, 0, 5)
 
 
+FUNDAMENTAL_ALANLAR = ["fk", "pddd", "roe", "net_borc_favok"]
+
+
+def fundamental_yeterlilik_kontrolu(row, min_dolu_alan_sayisi=2, min_skor_orani=0.25):
+    """YENİ ÖZELLİK (kullanıcı isteği): bir hissenin fundamental verisinin
+    (F/K, PD/DD, ROE, Net Borç/FAVÖK) ön eleme/aday seçiminden geçecek
+    kadar YETERLİ ve GÜÇLÜ olup olmadığını değerlendirir - "temel analizi
+    zayıf veya verisi çok eksik olan hisseleri ilk N'e alma" isteğini
+    karşılar.
+
+    Bilinçli olarak İKİ AYRI kritere bakar (tek bir skor eşiği YETERLİ
+    DEĞİLDİR): compute_fundamental_score, tüm alanlar eksik olduğunda
+    bile TAM NÖTR (10/20 = %50) puan döner - yani "veri çok eksik"
+    durumu, düşük bir skor eşiğiyle YAKALANAMAZ (nötr puan düşük
+    sayılmaz). Bu yüzden eksiklik ayrıca, dolu alan SAYISI üzerinden
+    kontrol edilir.
+
+    1. EKSİKLİK: 4 alandan en az `min_dolu_alan_sayisi` tanesi (varsayılan
+       2) DOLU olmalı; aksi halde "verisi çok eksik" kabul edilip elenir.
+    2. ZAYIFLIK: dolu alan sayısı yeterliyse, compute_fundamental_score
+       ile hesaplanan puan MAX_SCORE'un `min_skor_orani` (varsayılan 0.25
+       = 5/20) katından DÜŞÜKSE "zayıf" kabul edilip elenir.
+
+    Args:
+        row: bir hisse satırı (pandas Series/dict) - fk/pddd/roe/
+            net_borc_favok alanlarını içerir (eksik olabilir)
+        min_dolu_alan_sayisi: en az kaç fundamental alanın dolu olması
+            gerektiği (0-4 arası; varsayılan 2)
+        min_skor_orani: fundamental skorun MAX_SCORE'a oranı olarak
+            asgari eşik (0-1 arası; varsayılan 0.25)
+
+    Returns:
+        (yeterli: bool, sebep: str ya da None) - yeterli=False ise
+        sebep, kullanıcıya/log'a gösterilebilecek kısa bir açıklama
+        içerir; yeterli=True ise sebep None'dır.
+    """
+    dolu_sayisi = sum(
+        0 if _deger_eksik_mi(row.get(alan)) else 1 for alan in FUNDAMENTAL_ALANLAR
+    )
+    if dolu_sayisi < min_dolu_alan_sayisi:
+        return False, (
+            f"fundamental veri çok eksik ({dolu_sayisi}/{len(FUNDAMENTAL_ALANLAR)} "
+            "alan dolu)"
+        )
+
+    skor, _ = compute_fundamental_score(row)
+    esik = MAX_SCORE * min_skor_orani
+    if skor < esik:
+        return False, f"fundamental skor zayıf ({skor:.1f}/{MAX_SCORE})"
+
+    return True, None
+
+
 def compute_fundamental_score(row):
     """Bir hisse satırından (pandas Series/dict) bilanço/temel skoru
     hesaplar. fk/pddd/roe/net_borc_favok'tan herhangi biri eksikse

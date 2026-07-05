@@ -1823,31 +1823,56 @@ def run_full_update(config, on_progress=None):
     Ön eleme (top_n seçimi) bu TAM listeden yapılır, sadece o an
     görünen ~23 satırdan değil.
 
+    YENİ PIPELINE (kullanıcı isteği - v1.0 REVİZYON 2): önceden ilk top_n
+    aday DOĞRUDAN Radar momentum sıralamasından seçilip TradingView/
+    fundamental verisi SONRADAN, sadece bilgi amaçlı ekleniyordu - bu,
+    veri akışı eksik/zayıf/yeni hisselerin de top_n'e girmesine yol
+    açabiliyordu. Johnny'nin amacı "en yüksek uçuk getirili hisseler"
+    değil, "verisi güvenilir, teknik + temel olarak kaliteli günlük
+    trade adayları" bulmaktır. Artık top_n'den DAHA BÜYÜK bir "kalite
+    havuzu" (top_n * havuz_carpani) oluşturulur ve bu havuz, final top_n
+    seçilmeden ÖNCE fundamental kalite + TradingView teknik veri
+    mevcudiyeti süzgeçlerinden geçirilir.
+
     Adımlar (her biri on_progress ile loglanır):
         1. Fintables Radar okundu - tablo TAMAMEN (virtual scrolling
            sonuna kadar kaydırılarak, ~640 benzersiz hisse) okunur;
            her scroll turunda "Scroll N: Toplam hisse: X" loglanır
-        2. Ön eleme tamamlandı
-        3. İlk N aday seçildi ("640 hisse detayına girme" kuralı burada
-           uygulanır - detay/teknik/fundamental sayfalarına SADECE bu
-           N aday için girilir, 640 hissenin tamamına değil)
-        4. Her aday için: TradingView {SEMBOL} teknik veri alındı/alınamadı
-        5. Her aday için: F/K, PD/DD Fintables'ın "Piyasa Çarpanları"
-           sayfasından, ROE (varsa Net Borç/FAVÖK) "Rasyo Analiz
-           Tablosu" sayfasından okunmaya çalışılır (bkz.
+        2. Kaba filtre: çok düşük hacimli / fiyat-hacim verisi eksik ya
+           da anlamsız olan hisseler HARİÇ TUTULUR (bkz.
+           scoring/pre_screen.kaba_filtrele)
+        3. Kalite havuzu seçildi: top_n * havuz_carpani büyüklüğünde
+           aday, Radar momentum sinyaline göre seçilir (final top_n bu
+           havuzun İÇİNDEN, aşağıdaki süzgeçleri geçenlerden seçilecek)
+        4. Havuzdaki HER aday için: F/K, PD/DD Fintables'ın "Piyasa
+           Çarpanları" sayfasından, ROE (varsa Net Borç/FAVÖK) "Rasyo
+           Analiz Tablosu" sayfasından okunmaya çalışılır (bkz.
            fetch_fundamental_for_symbol). Bu sayfalar Cloudflare bot
-           koruması arkasında olabilir; bu koruma tespit edilirse
-           aşılmaya ÇALIŞILMAZ, sadece o sayfanın/hissenin ilgili
-           alanları None bırakılır.
-        6. Teknik + fundamental veriler birleştirildi (Radar satırı +
-           TradingView göstergeleri + Piyasa Çarpanları/Rasyo Analiz
-           Tablosu verisi tek bir kayıtta)
+           koruması arkasında olabilir; çıkarsa aşılmaya ÇALIŞILMAZ,
+           sadece o sayfanın/hissenin ilgili alanları None bırakılır.
+        5. Fundamental kalite süzgeci: verisi çok eksik (bkz.
+           fundamental_min_dolu_alan) ya da skoru zayıf (bkz.
+           fundamental_min_skor_orani) olan adaylar elenir (bkz.
+           scoring/fundamental_engine.fundamental_yeterlilik_kontrolu)
+        6. Fundamental süzgecinden geçen adaylar için: TradingView'den
+           RSI/MACD/EMA20/EMA50/EMA200/ADX/ATR alınır
+        7. Teknik veri süzgeci: TradingView'de HİÇ bulunamayan (tüm
+           göstergeleri boş dönen) adaylar elenir (bkz.
+           teknik_veri_zorunlu ayarı)
+        8. Final top_n seçimi: (5) ve (7)'yi geçen adaylardan momentum
+           skoruna göre en iyi top_n tanesi seçilir. Yeterli aday
+           kalmazsa (havuz çok küçük ya da süzgeçler çok katıysa) en iyi
+           kalan adaylarla "_dusuk_guven" (DÜŞÜK GÜVEN) işareti
+           eklenerek doldurulur - sistem ASLA çökmez ya da boş dönmez.
 
     Bir hisse için TradingView'den ya da Fintables oran analizi
     sayfalarından veri alınamazsa (ağ hatası, sembol bulunamadı, bot
     koruması vb.) o hisse ATLANMAZ - sadece ilgili alanlar None kalır ve
     loglanır; scoring katmanı bunu nötr varsayımlarla ele alır (bkz.
-    scoring/johnny_score.py, scoring/fundamental_engine.py).
+    scoring/johnny_score.py, scoring/fundamental_engine.py). Fundamental/
+    teknik kalite süzgeçleri ise bunun AKSİNE, bu adımda kasıtlı olarak
+    adayı top_n'den TAMAMEN ELER (nötr puanla devam ettirmez) - bu,
+    kullanıcının "veri akışı eksik hisseleri ilk 20'ye alma" isteğidir.
     `hata_listesi` bu akışta sadece yapısal bir sorun olursa (örn. hisse
     kodu kolonu hiç bulunamazsa) doldurulur - normal koşullarda genelde
     boştur.
@@ -1895,6 +1920,20 @@ def run_full_update(config, on_progress=None):
 
     on_eleme_cfg = fintables_cfg.get("pre_screen", {}) or {}
     top_n = on_eleme_cfg.get("top_n", 20)
+    # YENİ ÖZELLİK (kullanıcı isteği - pipeline yeniden yapılandırma):
+    # önceden ilk top_n aday DOĞRUDAN Radar momentum sıralamasından
+    # seçilip TradingView/fundamental verisi SONRADAN ekleniyordu - bu,
+    # veri akışı eksik/zayıf hisselerin de top_n'e girmesine yol
+    # açabiliyordu. Artık top_n'den DAHA BÜYÜK bir "kalite havuzu"
+    # (top_n * havuz_carpani) oluşturulur; bu havuzdaki adaylar önce
+    # fundamental kalite, sonra TradingView teknik veri mevcudiyeti
+    # süzgecinden geçirilir - final top_n SADECE bu iki süzgeci geçen
+    # adaylardan (en iyi momentum skoruna göre) seçilir.
+    havuz_carpani = on_eleme_cfg.get("havuz_carpani", 2)
+    min_hacim_percentile = on_eleme_cfg.get("min_hacim_percentile", 0.20)
+    fundamental_min_dolu_alan = on_eleme_cfg.get("fundamental_min_dolu_alan", 2)
+    fundamental_min_skor_orani = on_eleme_cfg.get("fundamental_min_skor_orani", 0.25)
+    teknik_veri_zorunlu = on_eleme_cfg.get("teknik_veri_zorunlu", True)
 
     detay_cfg = fintables_cfg.get("detay", {}) or {}
     radar_timeout_ms = detay_cfg.get("timeout_ms", 30_000)
@@ -1952,43 +1991,65 @@ def run_full_update(config, on_progress=None):
             "Yap' ile yeniden giriş yapmayı deneyin."
         ) from e
 
-    # 2-3) Ön eleme: ilk top_n aday (Radar'ın TAMAMI okunmuştu, ama
-    # sadece bunların teknik/fundamental detayına girilir)
-    _bildir("Ön eleme başladı.")
-    adaylar = pre_screen_candidates(df_radar, top_n=top_n)
-
+    # YENİ PIPELINE (kullanıcı isteği - "Johnny pipeline düzeltmesi"):
+    # önceden ilk top_n aday DOĞRUDAN Radar momentum sıralamasından
+    # seçilip TradingView/fundamental verisi SONRADAN, sadece bilgi
+    # amaçlı ekleniyordu - bu, veri akışı eksik/zayıf/yeni hisselerin de
+    # top_n'e girmesine yol açabiliyordu (amaç "en yüksek uçuk getirili"
+    # değil, "verisi güvenilir, kaliteli günlük trade adayları" olmalı).
+    # Artık akış şu şekilde: (2) kaba filtre (çok düşük hacim/eksik fiyat-
+    # hacim elenir) -> (3) top_n'den BÜYÜK bir kalite havuzu seçilir ->
+    # (4) bu havuz için ÖNCE fundamental veri çekilir -> (5) fundamental
+    # kalite süzgeci (zayıf/çok eksik olan elenir) -> (6) kalanlar için
+    # TradingView teknik verisi çekilir -> (7) teknik veri süzgeci
+    # (TradingView'de hiç bulunamayanlar elenir) -> (8) final top_n, bu
+    # iki süzgeci de geçen adaylardan momentum skoruna göre seçilir;
+    # yeterli aday kalmazsa en iyi kalanlarla DÜŞÜK GÜVEN işaretiyle
+    # doldurulur (sistem asla çökmez/boş dönmez).
+    from scoring import fundamental_engine as _fundamental_engine_mod
     from scoring import pre_screen as _pre_screen_mod
-    hisse_kolonu = _pre_screen_mod.find_ticker_column(adaylar.columns)
+
+    # 2) Kaba filtre: çok düşük hacimli / fiyat-hacim verisi eksik ya da
+    # anlamsız olan hisseler AÇIKÇA elenir (önceden bu satırlar sadece
+    # düşük bir rank alıp "yumuşak" eleniyordu, yine de seçilebilirlerdi).
+    _hisse_kolonu_ham = _pre_screen_mod.find_ticker_column(df_radar.columns)
+    df_radar_filtreli = _pre_screen_mod.kaba_filtrele(
+        df_radar, hisse_kolonu=_hisse_kolonu_ham,
+        min_hacim_percentile=min_hacim_percentile, on_progress=on_progress,
+    )
+
+    # 3) Kalite havuzu: top_n'den DAHA BÜYÜK (top_n * havuz_carpani) bir
+    # aday havuzu Radar momentum sinyaline göre seçilir. Final top_n bu
+    # havuzun İÇİNDEN, aşağıdaki fundamental+teknik süzgeçlerini
+    # geçenlerden seçilecek.
+    havuz_boyutu = max(top_n, int(round(top_n * havuz_carpani)))
+    _bildir(
+        f"Ön eleme başladı (kalite havuzu: top_n={top_n} x "
+        f"havuz_carpani={havuz_carpani} = {havuz_boyutu} aday)."
+    )
+    havuz = pre_screen_candidates(df_radar_filtreli, top_n=havuz_boyutu)
+
+    hisse_kolonu = _pre_screen_mod.find_ticker_column(havuz.columns)
     if hisse_kolonu is None:
         raise FintablesError(
             "Ön elemeden geçen adaylarda hisse kodu kolonu bulunamadı; "
-            "TradingView'e hangi hisseler için istek atılacağı "
+            "fundamental/TradingView için hangi hisselerin işleneceği "
             "belirlenemiyor."
         )
 
-    aday_kodlari = [str(x).strip() for x in adaylar[hisse_kolonu].tolist()]
+    havuz_kodlari = [str(x).strip() for x in havuz[hisse_kolonu].tolist()]
     _bildir(
-        f"İlk {len(aday_kodlari)} aday seçildi: {', '.join(aday_kodlari)}"
+        f"Kalite havuzu için {len(havuz_kodlari)} aday seçildi: "
+        f"{', '.join(havuz_kodlari)}"
     )
 
-    # 4) TradingView'den teknik göstergeleri al (tarayıcı GEREKMEZ - basit
-    # bir HTTP isteği; bkz. integrations/tradingview_indicators.py)
-    from integrations import tradingview_indicators
-
-    try:
-        tv_df = tradingview_indicators.fetch_indicators_for_candidates(
-            aday_kodlari, screener=tv_screener, exchange=tv_exchange,
-            interval=tv_interval, on_progress=on_progress, timeout=tv_timeout,
-        )
-    except tradingview_indicators.TradingViewIndicatorError as e:
-        raise FintablesError(str(e)) from e
-
-    # 5) Fundamental veri (Piyasa Çarpanları + Rasyo Analiz Tablosu) -
-    # AYRI bir tarayıcı oturumu gerekir (Radar için açılan oturum adım
-    # 1'de zaten kapatıldı). Bu sayfalar Cloudflare bot koruması
-    # arkasında olabilir (bkz. modül docstring'i); çıkarsa aşılmaya
-    # ÇALIŞILMAZ, o hissenin/sayfanın alanları None kalır, akış DURMAZ,
-    # diğer adaylarla devam eder.
+    # 4) Fundamental veri (Piyasa Çarpanları + Rasyo Analiz Tablosu) -
+    # ÖNCE fundamental çekiliyor (TradingView'DEN ÖNCE) ki zayıf/çok
+    # eksik fundamental'i olan adaylar için boşuna TradingView isteği
+    # atılmasın. AYRI bir tarayıcı oturumu gerekir. Bu sayfalar
+    # Cloudflare bot koruması arkasında olabilir (bkz. modül docstring'i);
+    # çıkarsa aşılmaya ÇALIŞILMAZ, o hissenin/sayfanın alanları None
+    # kalır, akış DURMAZ, diğer adaylarla devam eder.
     import random
 
     bekleme_min = detay_cfg.get("bekleme_min_sn", 2.0)
@@ -2013,7 +2074,7 @@ def run_full_update(config, on_progress=None):
             context = browser.new_context(storage_state=str(SESSION_PATH))
             page = context.new_page()
 
-            for i, ticker in enumerate(aday_kodlari):
+            for i, ticker in enumerate(havuz_kodlari):
                 if not tarayici_kullanilabilir:
                     _bildir(
                         f"{ticker}: tarayıcı oturumu kapandığı için "
@@ -2049,7 +2110,7 @@ def run_full_update(config, on_progress=None):
 
                 fundamental_kayitlari.append(kayit)
 
-                if i < len(aday_kodlari) - 1 and tarayici_kullanilabilir:
+                if i < len(havuz_kodlari) - 1 and tarayici_kullanilabilir:
                     try:
                         bekleme_ms = int(random.uniform(bekleme_min, bekleme_max) * 1000)
                         page.wait_for_timeout(bekleme_ms)
@@ -2067,7 +2128,7 @@ def run_full_update(config, on_progress=None):
             "bırakılıyor, akışa devam ediliyor."
         )
         islenen_hisseler = {k["hisse"] for k in fundamental_kayitlari}
-        for t in aday_kodlari:
+        for t in havuz_kodlari:
             if t not in islenen_hisseler:
                 fundamental_kayitlari.append(
                     {"hisse": t, "fk": None, "pddd": None, "roe": None, "net_borc_favok": None}
@@ -2075,21 +2136,119 @@ def run_full_update(config, on_progress=None):
 
     fundamental_df = pd.DataFrame(fundamental_kayitlari)
 
-    # 6) Radar + TradingView + fundamental verilerini birleştir.
-    # Eşleştirme hisse kodunun normalize edilmiş (boşluksuz, büyük harf)
-    # haliyle yapılır - Radar'daki kolon adı ne olursa olsun (örn. "640
-    # Hisse").
-    adaylar = adaylar.copy()
-    adaylar["_anahtar"] = adaylar[hisse_kolonu].astype(str).str.strip().str.upper()
-    tv_df["_anahtar"] = tv_df["hisse"].astype(str).str.strip().str.upper()
+    # 5) Havuzu fundamental veriyle birleştir, sonra FUNDAMENTAL KALİTE
+    # süzgecinden geçir - "temel analizi zayıf veya verisi çok eksik olan
+    # hisseleri ilk N'e alma" isteği. İKİ ayrı kritere bakılır (bkz.
+    # fundamental_engine.fundamental_yeterlilik_kontrolu): (a) 4 alandan
+    # (F/K, PD/DD, ROE, Net Borç/FAVÖK) en az `fundamental_min_dolu_alan`
+    # tanesi dolu olmalı, (b) fundamental skor `fundamental_min_skor_orani`
+    # eşiğinin altındaysa "zayıf" kabul edilip elenir.
+    havuz = havuz.copy()
+    havuz["_anahtar"] = havuz[hisse_kolonu].astype(str).str.strip().str.upper()
     fundamental_df["_anahtar"] = fundamental_df["hisse"].astype(str).str.strip().str.upper()
+    havuz_fundamentalli = havuz.merge(
+        fundamental_df.drop(columns=["hisse"]), on="_anahtar", how="left"
+    )
 
-    df_ham = adaylar.merge(tv_df.drop(columns=["hisse"]), on="_anahtar", how="left")
-    df_ham = df_ham.merge(fundamental_df.drop(columns=["hisse"]), on="_anahtar", how="left")
-    df_ham = df_ham.drop(columns=["_anahtar"])
+    fundamental_yeterli_maske = []
+    for _, satir in havuz_fundamentalli.iterrows():
+        yeterli, sebep = _fundamental_engine_mod.fundamental_yeterlilik_kontrolu(
+            satir, min_dolu_alan_sayisi=fundamental_min_dolu_alan,
+            min_skor_orani=fundamental_min_skor_orani,
+        )
+        fundamental_yeterli_maske.append(yeterli)
+        if not yeterli:
+            _bildir(f"{satir[hisse_kolonu]}: ön elemeden elendi ({sebep}).")
+
+    havuz_kaliteli = havuz_fundamentalli[
+        pd.Series(fundamental_yeterli_maske, index=havuz_fundamentalli.index)
+    ].copy()
+    _bildir(
+        f"Fundamental kalite süzgeci: {len(havuz_fundamentalli)} adaydan "
+        f"{len(havuz_kaliteli)} tanesi geçti."
+    )
+
+    if havuz_kaliteli.empty:
+        _bildir(
+            "UYARI: fundamental kalite süzgecinden HİÇBİR aday geçemedi "
+            "(eşikler bu turda çok katı kalmış olabilir); tüm havuz "
+            "best-effort ile devam ettiriliyor (fundamental filtre bu "
+            "turda atlanıyor, sistem durmuyor)."
+        )
+        havuz_kaliteli = havuz_fundamentalli.copy()
+
+    # 6) TradingView'den teknik göstergeleri al (tarayıcı GEREKMEZ - basit
+    # bir HTTP isteği) - SADECE fundamental kalite süzgecinden geçen
+    # adaylar için (gereksiz istek atılmasın).
+    from integrations import tradingview_indicators
+
+    kaliteli_kodlari = [str(x).strip() for x in havuz_kaliteli[hisse_kolonu].tolist()]
+    try:
+        tv_df = tradingview_indicators.fetch_indicators_for_candidates(
+            kaliteli_kodlari, screener=tv_screener, exchange=tv_exchange,
+            interval=tv_interval, on_progress=on_progress, timeout=tv_timeout,
+        )
+    except tradingview_indicators.TradingViewIndicatorError as e:
+        raise FintablesError(str(e)) from e
+
+    tv_df["_anahtar"] = tv_df["hisse"].astype(str).str.strip().str.upper()
+    havuz_teknikli = havuz_kaliteli.merge(
+        tv_df.drop(columns=["hisse"]), on="_anahtar", how="left"
+    )
+
+    # 7) Teknik veri zorunluluğu süzgeci - "TradingView'den teknik veri
+    # alınamıyorsa o hisseyi ilk N'e alma" isteği. Yeterli aday kalmazsa
+    # (aşağıda 8. adımda) en iyi kalanlarla DÜŞÜK GÜVEN işaretiyle
+    # doldurulur - sistem asla çökmez/boş dönmez.
+    teknik_var_maske = pd.Series(
+        [tradingview_indicators.teknik_veri_mevcut_mu(r) for _, r in havuz_teknikli.iterrows()],
+        index=havuz_teknikli.index,
+    )
+    if teknik_veri_zorunlu:
+        guclu_havuz = havuz_teknikli[teknik_var_maske].copy()
+        zayif_havuz = havuz_teknikli[~teknik_var_maske].copy()
+        _bildir(
+            f"Teknik veri süzgeci: {len(havuz_teknikli)} adaydan "
+            f"{len(guclu_havuz)} tanesinde TradingView teknik verisi mevcut."
+        )
+    else:
+        guclu_havuz = havuz_teknikli.copy()
+        zayif_havuz = havuz_teknikli.iloc[0:0].copy()
+
+    # 8) Final top_n seçimi: önce GÜÇLÜ havuzdan (orijinal momentum
+    # skoruna göre sıralı), yetmezse ZAYIF havuzdan (teknik verisi
+    # olmayan ama fundamental'i yeterli) DÜŞÜK GÜVEN işaretiyle doldurulur.
+    guclu_havuz = guclu_havuz.sort_values("_on_eleme_skoru", ascending=False)
+    zayif_havuz = zayif_havuz.sort_values("_on_eleme_skoru", ascending=False)
+
+    if len(guclu_havuz) >= top_n:
+        secilenler = guclu_havuz.head(top_n).copy()
+        secilenler["_dusuk_guven"] = False
+    else:
+        eksik = top_n - len(guclu_havuz)
+        doldurma = zayif_havuz.head(eksik).copy()
+        guclu_havuz["_dusuk_guven"] = False
+        doldurma["_dusuk_guven"] = True
+        if not doldurma.empty:
+            _bildir(
+                f"UYARI: kalite süzgeçlerinden geçen aday sayısı yetersiz "
+                f"kaldı; {len(doldurma)} aday DÜŞÜK GÜVENLE (TradingView "
+                "teknik verisi yok) dolduruldu."
+            )
+        secilenler = pd.concat([guclu_havuz, doldurma])
+        if len(secilenler) < top_n:
+            _bildir(
+                f"UYARI: kalite filtrelerinden geçen toplam aday sayısı "
+                f"({len(secilenler)}) hedeflenen {top_n}'in altında kaldı "
+                "- Radar/fundamental/TradingView verisi bu turda kısıtlı "
+                "olabilir."
+            )
+
+    secilenler = secilenler.drop(columns=["_anahtar"], errors="ignore")
+    df_ham = secilenler.reset_index(drop=True)
     df_ham["hisse"] = df_ham[hisse_kolonu]
 
-    _bildir("Teknik ve fundamental veriler birleştirildi.")
+    _bildir("Fundamental ve teknik veriler birleştirildi (kalite filtreleriyle).")
     _bildir(f"Tamamlandı: {len(df_ham)} hisse işlendi.")
 
     return df_ham, hata_listesi
