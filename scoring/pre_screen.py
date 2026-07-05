@@ -85,6 +85,46 @@ def _kolon_bul(columns, anahtar_kelimeler, haric=None):
     return None
 
 
+def _index_benzeri_kolon_mu(sayisal_seri, toplam_satir):
+    """BUG FIX (canlı testte bulundu): Fintables Radar tablosunun ilk
+    kolonu genelde '#' başlıklı, sadece satırın sayfadaki SIRA NUMARASINI
+    (1'den ~640'a, Fintables'ın kendi varsayılan - genelde alfabetik -
+    sıralamasına göre) içerir; gerçek bir piyasa sinyali DEĞİLDİR.
+
+    Önceden bu kolon, hacim/gün/getiri kolonları isimden bulunamadığında
+    devreye giren "tüm sayısal kolonları kullan" yedek mantığına
+    yanlışlıkla dahil ediliyordu. Bu, "_on_eleme_skoru"nun gerçek
+    hacim/momentum sinyalinden ÇOK, Fintables'ın satırları hangi sırada
+    listelediğine (örn. alfabetik) göre çarpıtılmasına yol açıyordu -
+    canlı testte doğrulandı: seçilen top-20'nin '#' değerlerinin
+    ortalaması, gerçek bir sinyal olmadığı durumda beklenen ~320
+    (640/2) yerine ~434 çıktı ve adaylar neredeyse tam alfabetik
+    ters sırada geldi (Z...'dan başlayan hisseler öne çıktı).
+
+    Bu fonksiyon, bir sayısal kolonun "1'den N'e kadar sıra numarası"
+    gibi görünüp görünmediğini (yani gerçek bir piyasa ölçütü değil, bir
+    DİZİN/SIRA artefaktı olup olmadığını) tespit eder: değerlerin büyük
+    çoğunluğu BENZERSİZ ve [1, satır_sayısı] aralığına yakınsa, bu bir
+    indeks kolonu kabul edilir ve puanlamadan HARİÇ TUTULUR.
+    """
+    if toplam_satir <= 0:
+        return False
+    gecerli = sayisal_seri.dropna()
+    if len(gecerli) < max(3, toplam_satir * 0.9):
+        return False
+    # Değerlerin tamsayıya çok yakın olması gerekir (sıra numaraları
+    # ondalıklı olmaz).
+    if not all(abs(v - round(v)) < 1e-9 for v in gecerli):
+        return False
+    benzersiz_sayi = gecerli.nunique()
+    if benzersiz_sayi < 0.95 * len(gecerli):
+        return False
+    return (
+        gecerli.min() >= 1
+        and gecerli.max() <= toplam_satir * 1.05
+    )
+
+
 def _rank_normalize(seri):
     """Bir sayısal pandas Series'i 0-1 arası percentile rank'e çevirir.
     NaN değerler en düşük (0) kabul edilir (eksik veri ön elemede
@@ -137,11 +177,18 @@ def select_top_candidates(df_radar, top_n=DEFAULT_TOP_N, hisse_kolonu=None):
             "yapılamıyor. Tablonun ilk birkaç kolonunu kontrol edin."
         )
 
-    hacim_kolonu = _kolon_bul(df.columns, ["hacim"], haric=[hisse_kolonu])
-    gun_kolonu = _kolon_bul(df.columns, ["gun"], haric=[hisse_kolonu])
+    # BUG FIX: Fintables Radar'ın '#' (sıra numarası) kolonu gerçek bir
+    # piyasa sinyali değildir - bkz. _index_benzeri_kolon_mu docstring'i.
+    # Adı zaten '#' olan kolon (en yaygın/bilinen hâli) burada baştan
+    # hariç tutulur; aşağıdaki fallback döngüsünde de değer-bazlı genel
+    # tespitle (isim ne olursa olsun) ayrıca korunuyoruz.
+    haric_kolonlar = [hisse_kolonu, "#"]
+
+    hacim_kolonu = _kolon_bul(df.columns, ["hacim"], haric=haric_kolonlar)
+    gun_kolonu = _kolon_bul(df.columns, ["gun"], haric=haric_kolonlar)
     getiri_kolonlari = [
         c for c in df.columns
-        if c not in (hisse_kolonu, hacim_kolonu, gun_kolonu) and "getiri" in _normalize(c)
+        if c not in (hisse_kolonu, hacim_kolonu, gun_kolonu, "#") and "getiri" in _normalize(c)
     ]
     # En kısa vadeli getiri kolonunu tercih et (genelde en momentum-benzeri
     # sinyal); Fintables kolon sırası genelde kısa->uzun vade şeklindedir.
@@ -151,12 +198,16 @@ def select_top_candidates(df_radar, top_n=DEFAULT_TOP_N, hisse_kolonu=None):
 
     if not kullanilan_kolonlar:
         # Hiçbir tanıdık kolon bulunamadıysa: tablodaki sayıya çevrilebilen
-        # tüm kolonları dene (hisse kodu hariç).
+        # tüm kolonları dene (hisse kodu hariç). BUG FIX: '#' gibi bir
+        # SIRA/İNDEKS kolonu da (ismi ne olursa olsun) burada yanlışlıkla
+        # gerçek bir sinyalmiş gibi puanlamaya sızabilirdi - bu yüzden her
+        # aday kolon _index_benzeri_kolon_mu ile de kontrol edilip
+        # index-benzeri olanlar dışlanır.
         for c in df.columns:
-            if c == hisse_kolonu:
+            if c == hisse_kolonu or c == "#":
                 continue
             sayisal = df[c].map(_sayiya_cevir)
-            if sayisal.notna().sum() > 0:
+            if sayisal.notna().sum() > 0 and not _index_benzeri_kolon_mu(sayisal, len(df)):
                 kullanilan_kolonlar.append(c)
 
     if not kullanilan_kolonlar:
