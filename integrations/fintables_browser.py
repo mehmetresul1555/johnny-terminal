@@ -550,6 +550,26 @@ def _radar_sayfasindan_df_olustur(
         )
         raise FintablesError(mesaj)
 
+    # BUG FIX: `wait_for_selector(RADAR_TABLE_SELECTOR_VARSAYILAN, ...)`
+    # yukarıda sadece tablonun KABUĞUNUN (table.grid) DOM'da belirmesini
+    # bekler - satırların (tbody tr) GERÇEKTEN dolduğunu DEĞİL. Tablo
+    # React tabanlı olduğu için kabuk önce, veriler (satırlar) biraz
+    # sonra (ayrı bir istek/render sonucu) gelebilir. Bu ayrı bekleme
+    # olmadan aşağıdaki döngü ilk turunu satırlar henüz boşken
+    # okuyabilir - bu da "Toplam hisse: 0" ile başlayıp hiç
+    # değişmediği için (yanlışlıkla) "tablo sonuna ulaşıldı" sanılıp
+    # erken vazgeçilmesine yol açar. Bu yüzden en az BİR satır
+    # görünene kadar ayrıca bekleniyor; bu bekleme zaman aşımına
+    # uğrasa bile (örn. tablo gerçekten boşsa) hata FIRLATILMAZ -
+    # aşağıdaki döngü kendi deneme/stabilizasyon mantığıyla devam eder.
+    try:
+        page.wait_for_selector(
+            f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr",
+            timeout=timeout_ms,
+        )
+    except Exception:
+        pass
+
     # NOT: Fintables Radar tablosu, "yapışkan" (sticky) kaydırma
     # başlığı için ikinci bir gizli/kopya <thead> içerebiliyor. Bu
     # yüzden sadece İLK <thead>'in İLK <tr>'sindeki <th>'ler alınır;
