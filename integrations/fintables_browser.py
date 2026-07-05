@@ -305,7 +305,7 @@ def fetch_screener_table(page_url, table_selector="table", row_selector="tr", he
             browser = p.chromium.launch(headless=headless)
             context = browser.new_context(storage_state=str(SESSION_PATH))
             page = context.new_page()
-            page.goto(page_url, timeout=timeout_ms)
+            page.goto(page_url, timeout=timeout_ms, wait_until="domcontentloaded")
             page.wait_for_selector(table_selector, timeout=timeout_ms)
             html = page.content()
             browser.close()
@@ -1113,8 +1113,17 @@ def fetch_fundamental_for_symbol(page, ticker, config=None, on_progress=None):
     timeout_ms = detay_cfg.get("timeout_ms", 30_000)
 
     # 1) Piyasa Çarpanları (F/K, PD/DD)
+    # NOT: wait_until="domcontentloaded" (Playwright varsayılanı "load"
+    # yerine) - "load" olayı analytics/reklam gibi arka plan istekleri
+    # yüzünden çok geç tetiklenebiliyor (hatta zaman aşımına uğrayabiliyor).
+    # Sayfa React tabanlı olduğu için DOM yüklendikten sonra veri hâlâ
+    # render ediliyor olabilir; bu yüzden kısa bir bekleme ekleniyor.
     try:
-        page.goto(PIYASA_CARPANLARI_URL_TEMPLATE.format(ticker=ticker), timeout=timeout_ms)
+        page.goto(
+            PIYASA_CARPANLARI_URL_TEMPLATE.format(ticker=ticker),
+            timeout=timeout_ms, wait_until="domcontentloaded",
+        )
+        page.wait_for_timeout(2_000)
     except Exception as e:
         _bildir(f"{ticker}: Piyasa Çarpanları sayfası açılamadı ({e}).")
     else:
@@ -1134,7 +1143,11 @@ def fetch_fundamental_for_symbol(page, ticker, config=None, on_progress=None):
 
     # 2) Rasyo Analiz Tablosu (ROE, varsa Net Borç/FAVÖK)
     try:
-        page.goto(RASYO_ANALIZ_TABLOSU_URL_TEMPLATE.format(ticker=ticker), timeout=timeout_ms)
+        page.goto(
+            RASYO_ANALIZ_TABLOSU_URL_TEMPLATE.format(ticker=ticker),
+            timeout=timeout_ms, wait_until="domcontentloaded",
+        )
+        page.wait_for_timeout(2_000)
     except Exception as e:
         _bildir(f"{ticker}: Rasyo Analiz Tablosu sayfası açılamadı ({e}).")
     else:
@@ -1203,7 +1216,7 @@ def fetch_radar_table(page_url=None, headless=True, timeout_ms=30_000):
             browser = p.chromium.launch(headless=headless)
             context = browser.new_context(storage_state=str(SESSION_PATH))
             page = context.new_page()
-            page.goto(page_url, timeout=timeout_ms)
+            page.goto(page_url, timeout=timeout_ms, wait_until="domcontentloaded")
             df = _radar_sayfasindan_df_olustur(page, timeout_ms=timeout_ms)
             browser.close()
     except FintablesError:
@@ -1415,7 +1428,14 @@ def run_full_update(config, on_progress=None):
             page = context.new_page()
 
             _bildir(f"Fintables Radar okunuyor: {radar_url}")
-            page.goto(radar_url, timeout=radar_timeout_ms)
+            # NOT: wait_until="domcontentloaded" kullanılıyor (Playwright
+            # varsayılanı olan "load" yerine) - Fintables sayfasında
+            # analytics/reklam gibi arka plan istekleri "load" olayının
+            # (tüm alt kaynaklar bitene kadar) çok geç tetiklenmesine
+            # (hatta zaman aşımına) yol açabiliyor. Asıl veri
+            # (tablo) zaten aşağıdaki wait_for_selector ile ayrıca
+            # bekleniyor, bu yüzden "load"u beklemek gereksiz risk.
+            page.goto(radar_url, timeout=radar_timeout_ms, wait_until="domcontentloaded")
             df_radar = _radar_sayfasindan_df_olustur(page, timeout_ms=radar_timeout_ms)
             _bildir(f"Fintables Radar okundu: {len(df_radar)} hisse.")
 
