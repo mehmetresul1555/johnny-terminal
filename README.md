@@ -82,12 +82,30 @@ tarandı: sayfa gerçek bir HTML `table.grid` kullanıyor
 (`thead > tr > th` başlıklar, `tbody.grid.relative > tr > td` veri
 satırları). `fetch_radar_table()` bu yapıya göre yazıldı; başlık ile
 hücre sayısı uyuşmayan satırlar sessizce atlanmaz, terminale uyarı
-olarak loglanıp güvenli şekilde atlanır. Sayfa ilk açıldığında ~640
-satırın tamamı DOM'da görünmeyebileceğinden, tablo okunmadan önce
-mümkün olduğunca çok satırın yüklenmesi için EN İYİ ÇABA (best-effort,
-doğrulanmamış) bir aşağı kaydırma denemesi yapılır. Şimdilik sadece
-sayfa ilk açıldığında görünen "Getiri" sekmesindeki tablo okunur;
-filtre/sekme değiştirme henüz yapılmıyor (bilinçli kapsam sınırlaması).
+olarak loglanıp güvenli şekilde atlanır. Şimdilik sadece sayfa ilk
+açıldığında görünen "Getiri" sekmesindeki tablo okunur; filtre/sekme
+değiştirme henüz yapılmıyor (bilinçli kapsam sınırlaması).
+
+**BUG FIX: Radar'ın TAMAMI (~640 hisse) okunuyor.** Canlı testte,
+Radar tablosunun virtual scrolling (sanal kaydırma) kullandığı ve
+sayfa ilk açıldığında ~640 hisseden sadece bir kısmının (~23 satır)
+DOM'da göründüğü tespit edildi — eski "tek seferlik oku" yaklaşımı bu
+yüzden eksik veri üretiyordu. `_radar_sayfasindan_df_olustur`
+(`integrations/fintables_browser.py`) artık şu döngüyü çalıştırır: DOM'da
+o an görünen satırları hisse koduna göre bir sözlükte biriktir (aynı
+hisse tekrar görülürse SADECE güncellenir, asla ikinci kez eklenmez —
+duplicate yok), "Scroll N: Toplam hisse: X" olarak logla, tabloyu aşağı
+kaydır, tekrar oku. Art arda `sabit_kalma_esigi` (varsayılan 5,
+`config/watchlist.yaml` -> `fintables.radar_scroll`) turda yeni hisse
+gelmezse tablonun sonuna ulaşıldığı kabul edilip durur; `max_deneme`
+(varsayılan 150) sonsuz döngüye karşı bir güvenlik sınırıdır. Kaydırma
+container'ının tam olarak ne olduğu (sayfa mı, grid'in kendi iç scroll
+div'i mi) canlı DOM taramasıyla kesin doğrulanmadığı için
+`_radar_scroll_tetikle` birden fazla yöntemi (JS ile en yakın
+kaydırılabilir atayı bulup `scrollTop` ayarlama, fare tekerleği, "End"
+tuşu) sırayla dener; hiçbiri işe yaramasa bile akış çökmez, o ana kadar
+toplanan satırlarla devam eder. Ön eleme (ilk N aday seçimi) artık bu
+TAM (~640 hisse) listeden yapılıyor.
 
 **TradingView teknik veri kaynağı (güncel yöntem):** Teknik göstergeler
 `https://scanner.tradingview.com/{screener}/scan` uç noktasından
@@ -408,9 +426,12 @@ Sıradaki olası adımlar:
   (`_etiket_sonrasi_ilk_degerler`) ince ayarı.
 - Net Borç/FAVÖK için Fintables'ta ayrı, güvenilir bir kaynak bulunması
   (şu an genelde None kalıyor).
-- Radar tablosunun ~640 satırının tamamının güvenilir şekilde
-  yüklenmesi (şu an best-effort bir kaydırma denemesi var; Fintables'ın
-  grid bileşeni tamamen sanallaştırılmışsa yetersiz kalabilir).
+- Radar tablosunun tamamının okunması (virtual scrolling döngüsü,
+  "Scroll N: Toplam hisse: X" logu) DÜZELTİLDİ ve mock testlerle
+  doğrulandı (bkz. yukarıdaki "BUG FIX" notu); gerçek Fintables
+  hesabında canlı doğrulanması hâlâ gerekiyor - kaydırma yöntemlerinden
+  (JS scrollTop / mouse wheel / End tuşu) hangisinin gerçek grid'i
+  tetiklediği kesin olarak teyit edilmedi.
 - `haber_puani`/`kurumsal_puani`/`piyasa_rejimi` için planlanan otomatik
   hesaplama (KAP entegrasyonu, analist hedef fiyatları, piyasa
   endeksleri/hacim verisi).

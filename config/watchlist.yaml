@@ -70,11 +70,28 @@ fintables:
     table: "table.grid"
     row: "tr"
 
-  # v1.0 FINAL "final akış": Radar'daki ~640 hisse arasından basit bir ön
-  # elemeyle (bkz. scoring/pre_screen.py) ilk top_n aday seçilir; SADECE
-  # bu adayların teknik verisi alınır (640 hissenin tamamı DEĞİL). Teknik
-  # veri artık Fintables'tan değil TradingView'den geliyor (bkz. aşağıdaki
-  # tradingview: bloğu ve integrations/tradingview_indicators.py).
+  # BUG FIX (v1.0): Radar tablosu virtual scrolling (sanal kaydırma)
+  # kullanıyor - sayfa ilk açıldığında ~640 hisseden sadece bir kısmı
+  # (canlı testte ~23 satır) DOM'da görünüyordu. Bu ayarlar, tablonun
+  # TAMAMI (yaklaşık 640 benzersiz hisse) okunana kadar devam eden
+  # "oku -> kaydır -> tekrar oku" döngüsünü (bkz. integrations/
+  # fintables_browser.py -> _radar_sayfasindan_df_olustur) kontrol eder.
+  radar_scroll:
+    # Art arda kaç scroll'da YENİ (benzersiz) hisse gelmezse tablonun
+    # sonuna ulaşıldığı kabul edilip döngü durdurulur.
+    sabit_kalma_esigi: 5
+    # Güvenlik sınırı: sonsuz döngüyü önlemek için azami scroll denemesi.
+    max_deneme: 150
+    # Her scroll denemesi arasında beklenecek süre (ms) - virtual
+    # scrolling bileşeninin yeni satırları render etmesi için.
+    bekleme_ms: 400
+
+  # v1.0 FINAL "final akış": Radar'daki ~640 hisse TAMAMEN okunduktan
+  # sonra basit bir ön elemeyle (bkz. scoring/pre_screen.py) ilk top_n
+  # aday seçilir; SADECE bu adayların teknik/fundamental detayına
+  # girilir (640 hissenin tamamına değil). Teknik veri Fintables'tan
+  # değil TradingView'den geliyor (bkz. aşağıdaki tradingview: bloğu ve
+  # integrations/tradingview_indicators.py).
   pre_screen:
     top_n: 20
 

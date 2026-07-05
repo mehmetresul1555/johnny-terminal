@@ -38,6 +38,22 @@ veri satırları. `fetch_radar_table()` bu yapıya göre yazıldı ve
 "Getiri" sekmesi okunur; filtre/sekme değiştirme henüz yapılmıyor
 (bilinçli kapsam sınırlaması).
 
+BUG FIX (v1.0): Canlı testte Radar'ın ~640 hissesinden sadece ~23'ünün
+okunduğu görüldü - tablo virtual scrolling (sanal kaydırma) kullanıyor,
+yani sayfa ilk açıldığında sadece DOM'da o an görünen satırlar mevcut.
+`_radar_sayfasindan_df_olustur` artık bunu "oku -> kaydır -> tekrar oku"
+döngüsüyle ele alıyor: her turda DOM'daki mevcut satırlar hisse koduna
+göre bir sözlükte biriktirilir (aynı hisse tekrar görülürse SADECE
+güncellenir, asla ikinci kez eklenmez), sonra tablo aşağı kaydırılır.
+Art arda `sabit_kalma_esigi` (varsayılan 5) turda benzersiz hisse sayısı
+artmıyorsa tablonun sonuna ulaşıldığı kabul edilip döngü durur. Kaydırma
+container'ının tam olarak ne olduğu (sayfa mı, yoksa grid'in kendi iç
+scroll div'i mi) canlı DOM taramasıyla kesin doğrulanmadığı için
+`_radar_scroll_tetikle` birden fazla yöntemi (JS ile en yakın
+kaydırılabilir atayı bulup scrollTop ayarlama, fare tekerleği, "End"
+tuşu) sırayla dener - biri işe yararsa yeterlidir, hiçbiri işe
+yaramasa da akış çökmez (mevcut satırlarla devam eder).
+
 DURUM (Hisse Detay / Teknik Analiz sayfası) - PASİF (v1.0 FINAL
 REVİZYONU itibarıyla `run_full_update()` tarafından KULLANILMIYOR):
 
@@ -109,6 +125,18 @@ FINTABLES_LOGIN_URL_VARSAYILAN = "https://fintables.com/auth/login"
 # <tbody class="grid relative"><tr><td> veri satırları içeriyor.
 RADAR_URL_VARSAYILAN = "https://fintables.com/radar/hisse-senetleri"
 RADAR_TABLE_SELECTOR_VARSAYILAN = "table.grid"
+
+# BUG FIX (v1.0): Radar tablosu virtual scrolling (sanal kaydırma)
+# kullanıyor - sayfa ilk açıldığında ~640 hisseden sadece bir kısmı DOM'da
+# görünüyor (canlı testte doğrulandı: sadece ~23 satır okunuyordu). Bu
+# yüzden `_radar_sayfasindan_df_olustur` artık TEK seferlik bir okuma
+# değil, "oku -> kaydır -> tekrar oku" döngüsü çalıştırır; yeni hisse
+# gelmeyi bırakana kadar (art arda `sabit_kalma_esigi` denemede benzersiz
+# hisse sayısı artmazsa) devam eder. Aşağıdaki varsayılanlar
+# config/watchlist.yaml -> fintables.radar_scroll ile değiştirilebilir.
+RADAR_MAX_SCROLL_DENEME_VARSAYILAN = 150
+RADAR_SABIT_KALMA_ESIGI_VARSAYILAN = 5
+RADAR_SCROLL_BEKLEME_MS_VARSAYILAN = 400
 
 # DOĞRULANDI (integrations/explore_fintables_detail_dom.py ile AKBNK
 # üzerinde test edildi): hisse detay/işlem ekranı sayfası, TradingView
@@ -339,73 +367,146 @@ def fetch_screener_table(page_url, table_selector="table", row_selector="tr", he
     return max(tablolar, key=len)
 
 
-def _radar_tablosunu_asagi_kaydir(page, max_deneme=40, bekleme_ms=350):
-    """EN İYİ ÇABA (best-effort), DOĞRULANMAMIŞ: Radar tablosu ~640 hisse
-    içeriyor ama sayfa ilk açıldığında genelde sadece bir kısmı (örn.
-    23 satır) DOM'da görünüyor olabilir (muhtemelen sanal
-    kaydırma/lazy-load bir grid bileşeni). Bu fonksiyon, tbody
-    satır sayısı artmayı bırakana kadar (ya da max_deneme'ye ulaşana
-    kadar) tablo alanını aşağı kaydırıp beklemeyi dener.
+def _radar_scroll_tetikle(page, tablo_selector=None):
+    """Radar tablosunun (virtual scrolling/sanal kaydırma kullanan grid
+    bileşeninin) BİR SONRAKİ veri grubunu yüklemesini tetiklemeyi dener.
 
-    Fintables'ın grid bileşeni tamamen sanallaştırılmışsa (yani
-    ekran dışı satırları DOM'dan tamamen siliyorsa) bu yöntem TÜM
-    satırları aynı anda biriktiremeyebilir; bu durumda sadece o anda
-    DOM'da görünen satırlar okunur. Bu bilinen, kabul edilmiş bir
-    sınırlamadır (kesin çözüm için gerçek sayfa üzerinde ayrı bir DOM
-    incelemesi gerekir). Hata durumunda sessizce durur, sistemi
-    ÇÖKERTMEZ.
+    Fintables'ın grid'inin gerçek kaydırma container'ı (sayfanın kendisi
+    mi, yoksa grid'in kendi iç `overflow-y` div'i mi olduğu) canlı bir
+    DOM taramasıyla kesin doğrulanmadığı için BİRDEN FAZLA yöntem sırayla
+    denenir - hangisi işe yararsa yarasın, DOM'a yeni satırların gelmesi
+    yeterlidir:
+
+        1) JS ile tablonun en yakın kaydırılabilir (overflow-y: auto/
+           scroll) ata elementi bulunup `scrollTop = scrollHeight` yapılır
+           (bulunamazsa `window.scrollTo` ile sayfa sonuna kaydırılır)
+        2) sayfa/pencere düzeyinde fare tekerleği kaydırması
+        3) klavyeden "End" tuşu
+
+    Her adım kendi try/except'i içinde - biri başarısız olursa (örn.
+    mock/test ortamında ilgili metot mevcut değilse, ya da site yapısı
+    değişmişse) sessizce bir sonrakine geçilir; HİÇBİRİ işe yaramasa bile
+    akış ÇÖKMEZ - çağıran taraf (bkz. `_radar_sayfasindan_df_olustur`)
+    sadece yeni satır gelmediğini fark edip normal şekilde durur.
     """
+    tablo_selector = tablo_selector or RADAR_TABLE_SELECTOR_VARSAYILAN
+
     try:
-        onceki_satir_sayisi = -1
-        sabit_kalma_sayaci = 0
-        for _ in range(max_deneme):
-            satir_sayisi = page.locator(
-                f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr"
-            ).count()
-
-            if satir_sayisi == onceki_satir_sayisi:
-                sabit_kalma_sayaci += 1
-                # Art arda 3 denemede satır sayısı artmadıysa muhtemelen
-                # tüm veri yüklendi (ya da tablo sanallaştırılmış ve daha
-                # fazlası gelmeyecek) - dur.
-                if sabit_kalma_sayaci >= 3:
-                    break
-            else:
-                sabit_kalma_sayaci = 0
-            onceki_satir_sayisi = satir_sayisi
-
-            page.mouse.wheel(0, 2000)
-            page.wait_for_timeout(bekleme_ms)
+        js = """
+        (selector) => {
+            const tablo = document.querySelector(selector);
+            if (tablo) {
+                let el = tablo.parentElement;
+                while (el && el !== document.body) {
+                    const stil = window.getComputedStyle(el);
+                    if ((stil.overflowY === 'auto' || stil.overflowY === 'scroll')
+                        && el.scrollHeight > el.clientHeight) {
+                        el.scrollTop = el.scrollHeight;
+                        return true;
+                    }
+                    el = el.parentElement;
+                }
+            }
+            window.scrollTo(0, document.body.scrollHeight);
+            return false;
+        }
+        """
+        page.evaluate(js, tablo_selector)
     except Exception:
-        # Kaydırma denemesi başarısız olsa bile mevcut satırlarla devam
-        # edilebilir; bu adım opsiyonel bir iyileştirmedir.
+        pass
+
+    try:
+        page.mouse.wheel(0, 2500)
+    except Exception:
+        pass
+
+    try:
+        page.keyboard.press("End")
+    except Exception:
         pass
 
 
-def _radar_sayfasindan_df_olustur(page, timeout_ms=30_000):
+def _radar_hisse_kolon_indexi_bul(basliklar):
+    """Radar tablosu başlıkları arasında hisse kodu kolonunun (örn.
+    '640 Hisse') indeksini bulur; scoring/pre_screen.find_ticker_column
+    ile AYNI mantığı kullanır (tek bir yerden yönetilsin diye - ön eleme
+    ile burada aynı kolon bulunmalı). Bulunamazsa 0 (ilk kolon) varsayılır
+    - Fintables Radar tablosunda hisse kodu her zaman ilk kolonda görünür
+    (integrations/explore_fintables_dom.py ile DOĞRULANDI)."""
+    from scoring.pre_screen import find_ticker_column
+
+    baslik = find_ticker_column(basliklar)
+    if baslik is not None and baslik in basliklar:
+        return basliklar.index(baslik)
+    return 0
+
+
+def _radar_sayfasindan_df_olustur(
+    page, timeout_ms=30_000, on_progress=None,
+    max_scroll_deneme=None, sabit_kalma_esigi=None, scroll_bekleme_ms=None,
+):
     """Zaten açılmış (page.goto ile Radar URL'ine gidilmiş) bir Playwright
-    `page` nesnesinden tabloyu okuyup DataFrame'e çevirir. Tarayıcı/context
-    yaşam döngüsünü YÖNETMEZ (açmaz/kapatmaz) — bu, hem tek başına
-    `fetch_radar_table()` tarafından hem de `run_full_update()` içindeki
-    PAYLAŞILAN (tek) tarayıcı oturumu tarafından çağrılabilmesi içindir.
+    `page` nesnesinden tabloyu OKUR; tarayıcı/context yaşam döngüsünü
+    YÖNETMEZ (açmaz/kapatmaz) — bu, hem tek başına `fetch_radar_table()`
+    tarafından hem de `run_full_update()` içindeki PAYLAŞILAN (tek)
+    tarayıcı oturumu tarafından çağrılabilmesi içindir.
 
     integrations/explore_fintables_dom.py ile DOĞRULANMIŞ sayfa yapısı:
         table.grid
           thead > tr > th        (kolon başlıkları)
           tbody.grid.relative > tr > td   (veri satırları)
 
-    NOT (EN İYİ ÇABA / DOĞRULANMAMIŞ): Sayfa ilk açıldığında ~640
-    hissenin tamamı DOM'da görünmüyor olabilir. Bu fonksiyon önce
-    `_radar_tablosunu_asagi_kaydir` ile mümkün olduğunca çok satırın
-    yüklenmesini dener, sonra DOM'da o an bulunan satırları okur. Bu,
-    kesin/doğrulanmış bir çözüm DEĞİLDİR; Fintables'ın grid bileşeni
-    tamamen sanallaştırılmışsa yine de tüm 640 satır elde edilemeyebilir.
+    BUG FIX (v1.0): Radar tablosu ~640 hisse içeriyor ama VIRTUAL
+    SCROLLING (sanal kaydırma) kullandığı için sayfa ilk açıldığında
+    DOM'da sadece bir kısmı (canlı testte ~23 satır) görünüyor. Bu
+    fonksiyon artık TEK seferlik bir okuma yapmıyor; şu döngüyü çalıştırır:
+
+        1. DOM'da O AN görünen satırları oku, hisse koduna göre bir
+           sözlükte biriktir (aynı hisse tekrar görülürse SADECE
+           güncellenir, asla ikinci kez eklenmez - duplicate yok).
+        2. Şu ana kadar toplanan BENZERSİZ hisse sayısını logla
+           ("Scroll N: Toplam hisse: X").
+        3. Art arda `sabit_kalma_esigi` turda benzersiz sayı artmadıysa
+           tablonun sonuna ulaşıldığı kabul edilip döngü durur.
+        4. Aksi halde `_radar_scroll_tetikle` ile tabloyu aşağı kaydırıp
+           kısa bir süre bekler, 1. adıma döner.
+
+    `max_scroll_deneme` bir güvenlik sınırıdır (sonsuz döngüyü önler);
+    normal koşullarda tablo sonuna sabit_kalma_esigi ile çok daha erken
+    ulaşılır. Kaydırma yöntemi/container'ı canlı DOM taramasıyla kesin
+    doğrulanmadığı için (bkz. `_radar_scroll_tetikle`) hiçbir yeni satır
+    gelmese bile akış çökmez - o ana kadar toplanan satırlarla devam
+    edilir.
+
+    Args:
+        on_progress: opsiyonel callable(str) — her scroll turunda ve
+            sonunda çağrılır (app.py'nin canlı log'unda göstermesi için).
+        max_scroll_deneme: azami scroll denemesi (varsayılan
+            RADAR_MAX_SCROLL_DENEME_VARSAYILAN).
+        sabit_kalma_esigi: art arda kaç turda yeni hisse gelmezse
+            durulacağı (varsayılan RADAR_SABIT_KALMA_ESIGI_VARSAYILAN).
+        scroll_bekleme_ms: her scroll denemesi arası bekleme (varsayılan
+            RADAR_SCROLL_BEKLEME_MS_VARSAYILAN).
 
     Raises:
         FintablesError: tablo zaman aşımına uğrarsa, başlıklar
             okunamazsa ya da hiç geçerli veri satırı bulunamazsa.
     """
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    def _bildir(mesaj):
+        print(f"[fintables_browser] {mesaj}")
+        if on_progress:
+            try:
+                on_progress(mesaj)
+            except Exception:
+                pass
+
+    max_scroll_deneme = max_scroll_deneme or RADAR_MAX_SCROLL_DENEME_VARSAYILAN
+    sabit_kalma_esigi = sabit_kalma_esigi or RADAR_SABIT_KALMA_ESIGI_VARSAYILAN
+    scroll_bekleme_ms = (
+        RADAR_SCROLL_BEKLEME_MS_VARSAYILAN if scroll_bekleme_ms is None else scroll_bekleme_ms
+    )
 
     try:
         page.wait_for_selector(RADAR_TABLE_SELECTOR_VARSAYILAN, timeout=timeout_ms)
@@ -449,11 +550,6 @@ def _radar_sayfasindan_df_olustur(page, timeout_ms=30_000):
         )
         raise FintablesError(mesaj)
 
-    # EN İYİ ÇABA: mümkün olduğunca çok satırın yüklenmesi için tabloyu
-    # aşağı kaydırmayı dene (bkz. _radar_tablosunu_asagi_kaydir docstring
-    # - bu adım DOĞRULANMAMIŞ, başarısız olursa sessizce atlanır).
-    _radar_tablosunu_asagi_kaydir(page)
-
     # NOT: Fintables Radar tablosu, "yapışkan" (sticky) kaydırma
     # başlığı için ikinci bir gizli/kopya <thead> içerebiliyor. Bu
     # yüzden sadece İLK <thead>'in İLK <tr>'sindeki <th>'ler alınır;
@@ -466,30 +562,6 @@ def _radar_sayfasindan_df_olustur(page, timeout_ms=30_000):
         ).first.locator("th").all_inner_texts()
     ]
 
-    # Aynı önlem tbody için de alınır (bilinen yapıda tek tbody var,
-    # ama ileride değişirse diye ilk tbody'e sabitleniyor).
-    satir_locator = page.locator(
-        f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr"
-    )
-    satir_sayisi = satir_locator.count()
-
-    veri_satirlari = []
-    uyumsuz_satir_sayisi = 0
-
-    for i in range(satir_sayisi):
-        hucreler = [h.strip() for h in satir_locator.nth(i).locator("td").all_inner_texts()]
-
-        if len(hucreler) != len(basliklar):
-            uyumsuz_satir_sayisi += 1
-            print(
-                f"[fintables_browser] UYARI: {i}. satır atlandı - "
-                f"başlık sayısı ({len(basliklar)}) ile hücre sayısı "
-                f"({len(hucreler)}) uyuşmuyor. Satır içeriği: {hucreler}"
-            )
-            continue
-
-        veri_satirlari.append(hucreler)
-
     if not basliklar:
         raise FintablesError(
             "Tablo başlıkları (thead th) okunamadı. Fintables'ın sayfa "
@@ -497,19 +569,89 @@ def _radar_sayfasindan_df_olustur(page, timeout_ms=30_000):
             "ile yeniden DOM taraması yapmanız gerekebilir."
         )
 
+    hisse_kolon_index = _radar_hisse_kolon_indexi_bul(basliklar)
+
+    # Tüm satırları hisse koduna göre biriktiren sözlük. Virtual
+    # scrolling nedeniyle DOM'daki satırlar tur tur DEĞİŞEBİLİR/
+    # kaybolabilir; bu yüzden okuma tek seferlik değil, aşağıdaki
+    # döngüde HER turda mevcut DOM durumu bu sözlüğe eklenir. Aynı
+    # hisse (aynı anahtar) tekrar görülürse dict semantiği gereği
+    # SADECE güncellenir - duplicate/tekrar eklenme YOKTUR.
+    gorulen_hisseler = {}
+    toplam_okunan_satir = 0
+    toplam_uyumsuz_satir = 0
+    onceki_benzersiz_sayi = -1
+    sabit_kalma_sayaci = 0
+    scroll_no = 0
+
+    while True:
+        satir_locator = page.locator(
+            f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr"
+        )
+        satir_sayisi = satir_locator.count()
+
+        for i in range(satir_sayisi):
+            hucreler = [h.strip() for h in satir_locator.nth(i).locator("td").all_inner_texts()]
+            if len(hucreler) != len(basliklar):
+                toplam_uyumsuz_satir += 1
+                continue
+            anahtar = hucreler[hisse_kolon_index].strip().upper()
+            if not anahtar:
+                continue
+            toplam_okunan_satir += 1
+            gorulen_hisseler[anahtar] = hucreler
+
+        scroll_no += 1
+        benzersiz_sayi = len(gorulen_hisseler)
+        _bildir(f"Scroll {scroll_no}: Toplam hisse: {benzersiz_sayi}")
+
+        if benzersiz_sayi == onceki_benzersiz_sayi:
+            sabit_kalma_sayaci += 1
+            if sabit_kalma_sayaci >= sabit_kalma_esigi:
+                break
+        else:
+            sabit_kalma_sayaci = 0
+        onceki_benzersiz_sayi = benzersiz_sayi
+
+        if scroll_no >= max_scroll_deneme:
+            _bildir(
+                f"UYARI: azami scroll denemesine ({max_scroll_deneme}) "
+                f"ulaşıldı, mevcut {benzersiz_sayi} benzersiz hisseyle "
+                "devam ediliyor."
+            )
+            break
+
+        _radar_scroll_tetikle(page)
+        try:
+            page.wait_for_timeout(scroll_bekleme_ms)
+        except Exception:
+            pass
+
+    veri_satirlari = list(gorulen_hisseler.values())
+
     if not veri_satirlari:
         raise FintablesError(
-            f"Tablodan okunabilen veri satırı bulunamadı (toplam "
-            f"{satir_sayisi} satırdan {uyumsuz_satir_sayisi} tanesi "
-            "başlık/hücre uyuşmazlığı nedeniyle atlandı)."
+            f"Tablodan okunabilen veri satırı bulunamadı ({scroll_no} "
+            "scroll denemesi sonunda)."
         )
 
-    if uyumsuz_satir_sayisi:
-        print(
-            f"[fintables_browser] Bilgi: {uyumsuz_satir_sayisi} satır "
-            f"uyuşmazlık nedeniyle atlandı, {len(veri_satirlari)} satır "
-            "başarıyla okundu."
+    if toplam_uyumsuz_satir:
+        _bildir(
+            f"Bilgi: toplam {toplam_uyumsuz_satir} satır, tur(lar) "
+            "boyunca başlık/hücre uyuşmazlığı nedeniyle atlandı."
         )
+
+    # NOT: "Toplam" ve "Benzersiz" burada KASITLI olarak aynı sayıyı
+    # (nihai, dedup edilmiş satır sayısını) gösterir - bu, döngünün
+    # duplicate BIRAKMADIĞININ bir doğrulamasıdır (bkz. `gorulen_hisseler`
+    # sözlüğü: aynı hisse birden fazla tur görülse bile SADECE bir kez
+    # sayılır). `toplam_okunan_satir` (tüm turlar boyunca, tekrarlar
+    # dahil ham okuma sayısı) ayrı bir iç diagnostik değerdir, kafa
+    # karıştırmasın diye kullanıcıya gösterilen özet mesajında YER ALMAZ.
+    _bildir(
+        f"Radar tamamlandı. Toplam: {len(veri_satirlari)} hisse. "
+        f"Benzersiz: {len(veri_satirlari)} hisse."
+    )
 
     return pd.DataFrame(veri_satirlari, columns=basliklar)
 
@@ -1173,16 +1315,23 @@ def fetch_fundamental_for_symbol(page, ticker, config=None, on_progress=None):
     return sonuc
 
 
-def fetch_radar_table(page_url=None, headless=True, timeout_ms=30_000):
+def fetch_radar_table(
+    page_url=None, headless=True, timeout_ms=30_000, on_progress=None,
+    max_scroll_deneme=None, sabit_kalma_esigi=None, scroll_bekleme_ms=None,
+):
     """Fintables Hisse Radar sayfasındaki tabloyu okuyup pandas
     DataFrame'e çevirir. Bu, integrations/explore_fintables_dom.py ile
     yapılan gerçek DOM taramasıyla DOĞRULANMIŞ bir sayfa yapısına göre
     yazılmıştır (bkz. `_radar_sayfasindan_df_olustur`).
 
-    Şimdilik sadece sayfa ilk açıldığında görünen (varsayılan "Getiri"
-    sekmesindeki) tablo okunur; herhangi bir filtre/kolon/sekme
-    değişikliği YAPILMAZ. Bu bilinçli bir kapsam sınırlamasıdır — önce
-    uçtan uca çalışan bir veri çekme hattı kurmak hedeflendi.
+    BUG FIX (v1.0): Radar tablosu virtual scrolling kullandığı için
+    sayfa ilk açıldığında ~640 hisseden sadece bir kısmı DOM'da görünür.
+    Bu fonksiyon artık `_radar_sayfasindan_df_olustur`'un "oku -> kaydır
+    -> tekrar oku" döngüsünü kullanır - tablonun sonuna ulaşılana kadar
+    (art arda yeni hisse gelmeyene kadar) devam eder, sadece sayfa ilk
+    açıldığında görünen satırlarla sınırlı kalmaz. Herhangi bir filtre/
+    kolon/sekme değişikliği YAPILMAZ (varsayılan "Getiri" sekmesi
+    okunur) - bu bilinçli bir kapsam sınırlamasıdır.
 
     Args:
         page_url: Radar sayfasının URL'i (varsayılan: doğrulanmış
@@ -1190,9 +1339,15 @@ def fetch_radar_table(page_url=None, headless=True, timeout_ms=30_000):
             fintables.screener_url ile değiştirilebilir.
         headless: True ise tarayıcı görünmez çalışır (varsayılan)
         timeout_ms: sayfa/element bekleme zaman aşımı (ms)
+        on_progress: opsiyonel callable(str) — her scroll turunda çağrılır.
+        max_scroll_deneme, sabit_kalma_esigi, scroll_bekleme_ms:
+            bkz. `_radar_sayfasindan_df_olustur` (verilmezse
+            config/watchlist.yaml -> fintables.radar_scroll varsayılanları
+            kullanılır).
 
     Returns:
-        pd.DataFrame: Fintables'ın kendi kolon başlıklarıyla, ham veri.
+        pd.DataFrame: Fintables'ın kendi kolon başlıklarıyla, TÜM
+        (benzersiz) satırları içeren ham veri (~640 hisse).
 
     Raises:
         FintablesError: oturum yoksa, sayfa açılamazsa/zaman aşımına
@@ -1217,7 +1372,12 @@ def fetch_radar_table(page_url=None, headless=True, timeout_ms=30_000):
             context = browser.new_context(storage_state=str(SESSION_PATH))
             page = context.new_page()
             page.goto(page_url, timeout=timeout_ms, wait_until="domcontentloaded")
-            df = _radar_sayfasindan_df_olustur(page, timeout_ms=timeout_ms)
+            df = _radar_sayfasindan_df_olustur(
+                page, timeout_ms=timeout_ms, on_progress=on_progress,
+                max_scroll_deneme=max_scroll_deneme,
+                sabit_kalma_esigi=sabit_kalma_esigi,
+                scroll_bekleme_ms=scroll_bekleme_ms,
+            )
             browser.close()
     except FintablesError:
         raise
@@ -1231,7 +1391,7 @@ def fetch_radar_table(page_url=None, headless=True, timeout_ms=30_000):
     return df
 
 
-def update_from_fintables(config):
+def update_from_fintables(config, on_progress=None):
     """config/watchlist.yaml -> fintables ayarlarını okuyup Fintables
     Hisse Radar'dan ham veriyi çeker (fetch_radar_table) ve data_mapper
     ile otomatik kolon eşleştirme önerisi üretir. app.py'daki
@@ -1248,8 +1408,14 @@ def update_from_fintables(config):
     fintables_cfg = config.get("fintables", {})
     page_url = fintables_cfg.get("screener_url") or RADAR_URL_VARSAYILAN
     headless = fintables_cfg.get("headless", True)
+    radar_scroll_cfg = fintables_cfg.get("radar_scroll", {}) or {}
 
-    df_ham = fetch_radar_table(page_url=page_url, headless=headless)
+    df_ham = fetch_radar_table(
+        page_url=page_url, headless=headless, on_progress=on_progress,
+        max_scroll_deneme=radar_scroll_cfg.get("max_deneme"),
+        sabit_kalma_esigi=radar_scroll_cfg.get("sabit_kalma_esigi"),
+        scroll_bekleme_ms=radar_scroll_cfg.get("bekleme_ms"),
+    )
     oneri = data_mapper.suggest_mapping(df_ham.columns)
     return df_ham, oneri
 
@@ -1336,12 +1502,23 @@ def run_full_update(config, on_progress=None):
     integrations/tradingview_indicators.py) - giriş/hesap gerekmez,
     tarayıcı otomasyonu yoktur, basit bir HTTP isteğidir.
 
+    BUG FIX (v1.0): Radar tablosu virtual scrolling kullandığı için
+    sayfa ilk açıldığında ~640 hisseden sadece bir kısmı DOM'da
+    görünüyordu (canlı testte ~23 satır okunmuştu). Adım 1 artık
+    `_radar_sayfasindan_df_olustur`'un "oku -> kaydır -> tekrar oku"
+    döngüsünü kullanır; tablonun TAMAMI (yaklaşık 640 benzersiz hisse,
+    hisse koduna göre duplicate kontrolüyle) okunana kadar devam eder.
+    Ön eleme (top_n seçimi) bu TAM listeden yapılır, sadece o an
+    görünen ~23 satırdan değil.
+
     Adımlar (her biri on_progress ile loglanır):
-        1. Fintables Radar okundu (tarayıcı otomasyonuyla, kayıtlı
-           oturum üzerinden - bu kısım DEĞİŞMEDİ)
+        1. Fintables Radar okundu - tablo TAMAMEN (virtual scrolling
+           sonuna kadar kaydırılarak, ~640 benzersiz hisse) okunur;
+           her scroll turunda "Scroll N: Toplam hisse: X" loglanır
         2. Ön eleme tamamlandı
         3. İlk N aday seçildi ("640 hisse detayına girme" kuralı burada
-           uygulanır)
+           uygulanır - detay/teknik/fundamental sayfalarına SADECE bu
+           N aday için girilir, 640 hissenin tamamına değil)
         4. Her aday için: TradingView {SEMBOL} teknik veri alındı/alınamadı
         5. Her aday için: F/K, PD/DD Fintables'ın "Piyasa Çarpanları"
            sayfasından, ROE (varsa Net Borç/FAVÖK) "Rasyo Analiz
@@ -1410,6 +1587,15 @@ def run_full_update(config, on_progress=None):
     detay_cfg = fintables_cfg.get("detay", {}) or {}
     radar_timeout_ms = detay_cfg.get("timeout_ms", 30_000)
 
+    # BUG FIX (v1.0): Radar ~640 hisse içeriyor ama virtual scrolling
+    # kullanıyor - bu ayarlar tablonun TAMAMI okunana kadar devam eden
+    # "oku -> kaydır -> tekrar oku" döngüsünü kontrol eder (bkz.
+    # _radar_sayfasindan_df_olustur).
+    radar_scroll_cfg = fintables_cfg.get("radar_scroll", {}) or {}
+    radar_max_scroll_deneme = radar_scroll_cfg.get("max_deneme")
+    radar_sabit_kalma_esigi = radar_scroll_cfg.get("sabit_kalma_esigi")
+    radar_scroll_bekleme_ms = radar_scroll_cfg.get("bekleme_ms")
+
     tv_cfg = config.get("tradingview", {}) or {}
     tv_screener = tv_cfg.get("screener", "turkey")
     tv_exchange = tv_cfg.get("exchange", "BIST")
@@ -1436,7 +1622,12 @@ def run_full_update(config, on_progress=None):
             # (tablo) zaten aşağıdaki wait_for_selector ile ayrıca
             # bekleniyor, bu yüzden "load"u beklemek gereksiz risk.
             page.goto(radar_url, timeout=radar_timeout_ms, wait_until="domcontentloaded")
-            df_radar = _radar_sayfasindan_df_olustur(page, timeout_ms=radar_timeout_ms)
+            df_radar = _radar_sayfasindan_df_olustur(
+                page, timeout_ms=radar_timeout_ms, on_progress=on_progress,
+                max_scroll_deneme=radar_max_scroll_deneme,
+                sabit_kalma_esigi=radar_sabit_kalma_esigi,
+                scroll_bekleme_ms=radar_scroll_bekleme_ms,
+            )
             _bildir(f"Fintables Radar okundu: {len(df_radar)} hisse.")
 
             browser.close()
@@ -1449,7 +1640,9 @@ def run_full_update(config, on_progress=None):
             "Yap' ile yeniden giriş yapmayı deneyin."
         ) from e
 
-    # 2-3) Ön eleme: ilk top_n aday (640 hissenin TAMAMI DEĞİL)
+    # 2-3) Ön eleme: ilk top_n aday (Radar'ın TAMAMI okunmuştu, ama
+    # sadece bunların teknik/fundamental detayına girilir)
+    _bildir("Ön eleme başladı.")
     adaylar = pre_screen_candidates(df_radar, top_n=top_n)
 
     from scoring import pre_screen as _pre_screen_mod
@@ -1489,7 +1682,19 @@ def run_full_update(config, on_progress=None):
     bekleme_min = detay_cfg.get("bekleme_min_sn", 2.0)
     bekleme_max = detay_cfg.get("bekleme_max_sn", 4.0)
 
+    # ÖNEMLİ (canlı testte bulunan hata DÜZELTİLDİ): önceki sürümde tüm
+    # döngü TEK bir try/except ile sarılıydı - döngünün SONLARINA doğru
+    # (örn. tarayıcı/sayfa beklenmedik şekilde kapandığında, "Target
+    # page, context or browser has been closed") bir hata oluşursa, o
+    # ana kadar BAŞARIYLA okunmuş tüm hisselerin verisi de silinip
+    # TAMAMI None yapılıyordu. Artık her hisse KENDİ try/except'i
+    # içinde işleniyor: bir hissede hata olursa SADECE o hissenin
+    # alanları None kalır, önceden okunan hisselerin verisi KORUNUR.
+    # Tarayıcı/sayfa kapanmışsa kalan adaylar için yeni bir context/page
+    # açılmaya çalışılır; bu da başarısız olursa kalan adaylar hızlıca
+    # (tekrar tekrar denemeden) None ile işaretlenir - sistem çökmez.
     fundamental_kayitlari = []
+    tarayici_kullanilabilir = True
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
@@ -1497,25 +1702,64 @@ def run_full_update(config, on_progress=None):
             page = context.new_page()
 
             for i, ticker in enumerate(aday_kodlari):
-                kayit = fetch_fundamental_for_symbol(
-                    page, ticker, config, on_progress=on_progress
-                )
-                fundamental_kayitlari.append(kayit)
-                if i < len(aday_kodlari) - 1:
-                    bekleme_ms = int(random.uniform(bekleme_min, bekleme_max) * 1000)
-                    page.wait_for_timeout(bekleme_ms)
+                if not tarayici_kullanilabilir:
+                    _bildir(
+                        f"{ticker}: tarayıcı oturumu kapandığı için "
+                        "atlanıyor, fundamental alanlar boş bırakıldı."
+                    )
+                    fundamental_kayitlari.append(
+                        {"hisse": ticker, "fk": None, "pddd": None, "roe": None, "net_borc_favok": None}
+                    )
+                    continue
 
-            browser.close()
+                try:
+                    kayit = fetch_fundamental_for_symbol(
+                        page, ticker, config, on_progress=on_progress
+                    )
+                except Exception as e:
+                    _bildir(
+                        f"{ticker}: fundamental veri alınırken beklenmeyen "
+                        f"bir hata oluştu ({e}); bu hissenin alanları boş "
+                        "bırakılıp akışa devam ediliyor."
+                    )
+                    kayit = {"hisse": ticker, "fk": None, "pddd": None, "roe": None, "net_borc_favok": None}
+                    # Tarayıcı/sayfa beklenmedik şekilde kapanmış olabilir;
+                    # kalan adaylar için yeni bir context/page açmayı dene.
+                    try:
+                        context = browser.new_context(storage_state=str(SESSION_PATH))
+                        page = context.new_page()
+                    except Exception:
+                        tarayici_kullanilabilir = False
+                        _bildir(
+                            "Tarayıcı oturumu kurtarılamadı; kalan adaylar "
+                            "için fundamental alanlar boş bırakılacak."
+                        )
+
+                fundamental_kayitlari.append(kayit)
+
+                if i < len(aday_kodlari) - 1 and tarayici_kullanilabilir:
+                    try:
+                        bekleme_ms = int(random.uniform(bekleme_min, bekleme_max) * 1000)
+                        page.wait_for_timeout(bekleme_ms)
+                    except Exception:
+                        pass
+
+            try:
+                browser.close()
+            except Exception:
+                pass
     except Exception as e:
         _bildir(
             f"Fundamental veri alınırken beklenmeyen bir hata oluştu "
-            f"({e}); tüm adaylar için bu alanlar boş bırakılıyor, "
-            "akışa devam ediliyor."
+            f"({e}); henüz işlenmemiş adaylar için bu alanlar boş "
+            "bırakılıyor, akışa devam ediliyor."
         )
-        fundamental_kayitlari = [
-            {"hisse": t, "fk": None, "pddd": None, "roe": None, "net_borc_favok": None}
-            for t in aday_kodlari
-        ]
+        islenen_hisseler = {k["hisse"] for k in fundamental_kayitlari}
+        for t in aday_kodlari:
+            if t not in islenen_hisseler:
+                fundamental_kayitlari.append(
+                    {"hisse": t, "fk": None, "pddd": None, "roe": None, "net_borc_favok": None}
+                )
 
     fundamental_df = pd.DataFrame(fundamental_kayitlari)
 
