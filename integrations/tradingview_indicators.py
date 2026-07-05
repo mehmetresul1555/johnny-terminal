@@ -85,12 +85,46 @@ def _ham_scanner_teshisi(tv_semboller, screener, interval, timeout):
         headers = {"User-Agent": "tradingview_ta_johnny_terminal_teshis"}
         yanit = requests.post(scan_url, json=data, headers=headers, timeout=timeout)
         govde_onizleme = yanit.text[:300].replace("\n", " ")
-        return (
-            f"Teşhis isteği sonucu -> HTTP {yanit.status_code}, URL: "
-            f"{scan_url}, yanıt önizlemesi: {govde_onizleme!r}"
+        tr_sonuc = (
+            f"Türkiye sorgusu -> HTTP {yanit.status_code}, URL: {scan_url}, "
+            f"yanıt önizlemesi: {govde_onizleme!r}"
         )
     except Exception as e:
-        return f"Teşhis isteği de başarısız oldu ({type(e).__name__}): {e}"
+        tr_sonuc = f"Türkiye sorgusu da başarısız oldu ({type(e).__name__}): {e}"
+
+    # BUG TEŞHİSİ (2. adım): Türkiye sorgusu boş dönerse, bunun TÜM
+    # TradingView entegrasyonunun (ağ/proxy/bot koruması nedeniyle)
+    # genel olarak çalışmadığını mı, yoksa SADECE Türkiye/BIST
+    # sorgusuna özgü bir sorunu mu (örn. "turkey" screener adının ya da
+    # "BIST" borsa kodunun artık farklı olması) gösterdiğini ayırt etmek
+    # için, İYİ BİLİNEN bir referans sembol (NASDAQ:AAPL, "america"
+    # screener'ı) aynı mekanizmayla SORGULANIR. Referans da boş dönerse
+    # sorun genel (ağ/API); referans BAŞARILI olup Türkiye boş dönerse
+    # sorun Türkiye/BIST sorgusuna özgüdür.
+    try:
+        import requests
+
+        from tradingview_ta import TradingView
+
+        referans_semboller = ["NASDAQ:AAPL"]
+        ref_data = TradingView.data(
+            referans_semboller, interval, TradingView.indicators.copy()
+        )
+        ref_url = f"{TradingView.scan_url}america/scan"
+        ref_yanit = requests.post(
+            ref_url, json=ref_data,
+            headers={"User-Agent": "tradingview_ta_johnny_terminal_teshis"},
+            timeout=timeout,
+        )
+        ref_onizleme = ref_yanit.text[:200].replace("\n", " ")
+        ref_sonuc = (
+            f"Referans sorgusu (NASDAQ:AAPL) -> HTTP {ref_yanit.status_code}, "
+            f"önizleme: {ref_onizleme!r}"
+        )
+    except Exception as e:
+        ref_sonuc = f"Referans sorgusu da başarısız oldu ({type(e).__name__}): {e}"
+
+    return f"{tr_sonuc} | {ref_sonuc}"
 
 
 def _ensure_tradingview_ta():
