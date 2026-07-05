@@ -570,17 +570,22 @@ def _radar_sayfasindan_df_olustur(
     except Exception:
         pass
 
-    # NOT: Fintables Radar tablosu, "yapışkan" (sticky) kaydırma
-    # başlığı için ikinci bir gizli/kopya <thead> içerebiliyor. Bu
-    # yüzden sadece İLK <thead>'in İLK <tr>'sindeki <th>'ler alınır;
-    # aksi halde başlık sayısı gerçek kolon sayısının iki katı çıkar ve
-    # her satır "uyuşmuyor" görünür.
-    basliklar = [
-        b.strip()
-        for b in page.locator(
-            f"{RADAR_TABLE_SELECTOR_VARSAYILAN} thead:first-of-type tr"
-        ).first.locator("th").all_inner_texts()
-    ]
+    # BUG FIX: canlı testte ilk <tr>'nin SADECE 2 <th> içerdiği görüldü
+    # (örn. ['#', '']) - oysa gerçek veri satırları 13 hücre içeriyordu.
+    # Demek ki thead:first-of-type BİRDEN FAZLA <tr> içeriyor: üstte
+    # muhtemelen gruplama/özet başlığı (colspan ile birleşik, az sayıda
+    # <th>), altta gerçek kolonların tek tek etiketleri (veri satırı
+    # hücre sayısıyla eşleşen, daha fazla <th>). Bu yüzden thead
+    # içindeki TÜM <tr>'ler taranır ve EN ÇOK <th> içeren satır
+    # kullanılır - gerçek, granüler kolon etiketlerinin bu satırda
+    # olduğu varsayımıyla. Tek bir <tr> varsa davranış değişmez (o
+    # zaten kullanılır).
+    basliklar = []
+    _thead_satirlari = page.locator(f"{RADAR_TABLE_SELECTOR_VARSAYILAN} thead:first-of-type tr")
+    for _i in range(_thead_satirlari.count()):
+        _aday_basliklar = [b.strip() for b in _thead_satirlari.nth(_i).locator("th").all_inner_texts()]
+        if len(_aday_basliklar) > len(basliklar):
+            basliklar = _aday_basliklar
 
     if not basliklar:
         raise FintablesError(
