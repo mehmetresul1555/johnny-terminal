@@ -24,6 +24,10 @@ aittir.
    ```
    playwright install chromium
    ```
+   Teknik göstergeler (RSI/MACD/EMA/ADX/ATR) artık TradingView'in
+   herkese açık uç noktasından `tradingview-ta` kütüphanesiyle alınıyor
+   (bkz. aşağıda); bu kütüphane `requirements.txt` ile birlikte kurulur,
+   ayrı bir kurulum adımı veya giriş/hesap gerekmez.
 
 ## Çalıştırma
 
@@ -58,16 +62,18 @@ oturumu üzerinden ilgili sayfalar açılıp okunur.
    dosyasına kaydedilir — bu dosya asla git'e commit'lenmez
    (`.gitignore`'da), asla bir yere gönderilmez.
 
-**v1.0 FINAL akış ("🔄 Fintables'tan Güncelle" butonuna her bastığınızda):**
+**v1.0 FINAL REVİZYONU akış ("🔄 Fintables'tan Güncelle" butonuna her bastığınızda):**
 
-1. Kayıtlı oturumla Hisse Radar ana tablosu (`https://fintables.com/radar/hisse-senetleri`) açılıp okunur (~640 hisse).
+1. Kayıtlı oturumla Hisse Radar ana tablosu (`https://fintables.com/radar/hisse-senetleri`) açılıp okunur (~640 hisse). Tarayıcı SADECE bu adım için kullanılır.
 2. Radar verisiyle basit, şeffaf bir **ön eleme** yapılır (`scoring/pre_screen.py`) — hacim, günlük değişim ve kısa vadeli getiri kolonlarının percentile rank ortalamasına göre.
-3. Ön elemeden geçen **ilk 20 aday** (`config/watchlist.yaml` -> `fintables.pre_screen.top_n`) seçilir.
-4. **Sadece bu 20 hissenin** detay/işlem ekranı sayfasına girilir — kalan ~620 hissenin detayına HİÇ girilmez.
-5. Her aday için RSI, MACD, EMA20/50/200, ADX, ATR grafiğin (TradingView widget) legend metinlerinden okunur ve Radar verisiyle birleştirilir.
+3. Ön elemeden geçen **ilk 20 aday** (`config/watchlist.yaml` -> `fintables.pre_screen.top_n`) seçilir. Radar okuma bitince tarayıcı hemen kapatılır.
+4. Bu 20 aday için RSI, MACD (histogram), EMA20/50/200, ADX, ATR% **Fintables'tan değil doğrudan TradingView'in herkese açık teknik analiz uç noktasından** (`integrations/tradingview_indicators.py`, `tradingview-ta` kütüphanesi) alınır — önce tek bir toplu istekle, o başarısız olursa hisse başına tek tek denenerek. Giriş/hesap/tarayıcı gerekmez, basit bir HTTP isteğidir.
+5. TradingView'den veri alınamayan bir hisse için (sembol bulunamadı, zaman aşımı vb.) o hissenin teknik alanları **None** bırakılır ve loglanır; hisse yine de listede kalır, ATLANMAZ.
 6. Birleşen ham veri, mevcut Kolon Eşleştirme adımına gönderilir; oradan Johnny Score hesaplanır ve Top 3 gösterilir.
 
-Bu akış tek bir tarayıcı oturumunda, adaylar SIRAYLA (paralel değil) gezilerek çalışır; her hisse arasında kısa, rastgele bir bekleme bırakılır (`fintables.detay.bekleme_min_sn` / `bekleme_max_sn`, varsayılan 2-4 saniye) — "yavaş ve güvenli" çalışma prensibi. Bir hissenin detay sayfası açılamaz/okunamazsa o hisse ATLANIR ve arayüzde "⚠️ Atlanan hisseler" bölümünde nedeniyle birlikte listelenir; sistem durmaz, kalan adaylarla devam eder. Her adım (Radar okundu, ön eleme tamamlandı, her hissede RSI/MACD/... okundu/okunamadı, hisse tamamlandı/atlandı) buton altında canlı bir günlük olarak gösterilir.
+Her adım (Fintables Radar okundu, ilk 20 aday seçildi, TradingView {SEMBOL} teknik veri alındı/alınamadı, teknik veriler birleştirildi, Johnny Score hesaplandı, Top 3 hazır) buton altında canlı bir günlük olarak gösterilir.
+
+**PASİF olan eski yöntem:** v1.0 FINAL'de RSI/MACD/EMA/ADX/ATR, Fintables'ın hisse detay/işlem ekranı sayfasındaki TradingView grafik widget'ının "legend" metin kutularından okunuyordu (`integrations/fintables_browser.py` içindeki `read_technical_indicators`, `fetch_technical_detail` vb.). Bu yöntem güvenilir bulunmadı: EMA20/EMA50/EMA200 gibi göstergeler kullanıcı grafiğe elle eklemediyse hiç görünmüyordu, ayrıca canvas/iframe tabanlı kırılgan bir DOM bağımlılığıydı. Bu fonksiyonlar geriye dönük referans/tekil test için dosyada duruyor ama `run_full_update()` artık bunları ÇAĞIRMIYOR.
 
 **Doğrulanmış sayfa yapısı (Radar):** Hisse Radar sayfasının DOM yapısı
 `integrations/explore_fintables_dom.py` ile gerçek bir oturumda
@@ -82,15 +88,39 @@ doğrulanmamış) bir aşağı kaydırma denemesi yapılır. Şimdilik sadece
 sayfa ilk açıldığında görünen "Getiri" sekmesindeki tablo okunur;
 filtre/sekme değiştirme henüz yapılmıyor (bilinçli kapsam sınırlaması).
 
-**Doğrulanmış sayfa yapısı (Detay/Teknik göstergeler):**
-`integrations/explore_fintables_detail_dom.py` ile AKBNK üzerinde
-gerçek bir DOM taraması yapıldı. Bulgular:
+**TradingView teknik veri kaynağı (güncel yöntem):** Teknik göstergeler
+`https://scanner.tradingview.com/{screener}/scan` uç noktasından
+(TradingView'in kendi "Teknik Analiz" widget'ının kullandığı, kimlik
+doğrulama GEREKTİRMEYEN herkese açık bir uç nokta) alınır. Kullanılan
+kütüphane `tradingview-ta` (PyPI, MIT lisanslı,
+github.com/AnalyzerREST/python-tradingview-ta) — basit bir HTTP POST
+isteği atar, tarayıcı otomasyonu ya da giriş yoktur. BIST hisseleri
+`"BIST:{KOD}"` formatında (örn. `"BIST:AKBNK"`) sorgulanır;
+`config/watchlist.yaml` -> `tradingview` bloğunda `screener: "turkey"`,
+`exchange: "BIST"`, `interval: "1d"` ayarlıdır. `ATR`, kütüphanenin
+varsayılan gösterge listesinde olmadığı için ayrıca istenir
+(`additional_indicators=["ATR"]`); `atr_pct` bu ATR değeri fiyata
+bölünerek hesaplanır, `macd_signal` ise MACD çizgisi ile sinyal
+çizgisi farkı (histogram) olarak hesaplanır. **Not:** Bu entegrasyon
+kod incelemesi ve mock (sahte modül) testleriyle doğrulandı; sandbox
+ağ kısıtlamaları nedeniyle gerçek TradingView API'sine karşı canlı
+test yapılamadı — `pip install tradingview-ta` sonrası kendi
+makinenizde bir kez "🔄 Fintables'tan Güncelle" ile deneyip günlükteki
+"TradingView ... teknik veri alındı/alınamadı" satırlarını kontrol
+etmeniz önerilir.
 
-- Hisse detay/işlem ekranı sayfası: `https://fintables.com/islem-ekrani?code={TICKER}` (`fintables.detay.url_template`).
-- Bu sayfada bir **TradingView tabanlı grafik widget'ı**, adı oturumdan oturuma değişen bir `blob:` URL'li `<iframe>` içinde çalışıyor.
-- Grafiğin/gösterge çizgilerinin kendisi bir `<canvas>` üzerinde render ediliyor — bu **DOM'dan okunamaz** (ve okunmaya çalışılmadı; OCR/canvas-parse gibi yöntemler bilinçli olarak kullanılmadı).
-- Ama eklenmiş her gösterge (RSI, MACD, EMA, ADX, ATR, Hacim...) ayrıca gerçek bir DOM elementi olan "legend" (üst bilgi) metin kutusunda da gösteriliyor: `[data-name='legend-source-item']` (`fintables.detay.legend_item_selector`). Bu metin `"RSI\n14\n46,65"` gibi satır satır bir içerik taşıyor ve `integrations/fintables_browser.py` -> `read_technical_indicators` bunu ayrıştırıp ilgili kolonlara atıyor.
-- **Önemli:** EMA20/EMA50/EMA200'ün grafiğe üç AYRI gösterge olarak EKLENMİŞ olması gerekiyor. Johnny bunları otomatik EKLEMEYE ÇALIŞMAZ — "gösterge ekle" arama/dialog akışı henüz bir DOM taramasıyla doğrulanmadı ve doğrulanmamış tıklamalar riskli olabilir. Bunun yerine: **Fintables/TradingView hesabınızda RSI, MACD, EMA(20), EMA(50), EMA(200), ADX, ATR göstergelerini bir kez elle ekleyip mümkünse "varsayılan şablon" olarak kaydedin** — TradingView bu düzeni genelde hesap/oturum boyunca korur, yani her hissede otomatik görünür. Eksik kalan bir gösterge varsa (`ensure_indicators_visible` bunu kontrol eder) o alan nötr varsayımla hesaplanır, sistem çökmez; sadece "Johnny neden bu puanı verdi?" bölümünde eksik olarak belirtilir.
+**PASİF: Eski Fintables Detay/Teknik göstergeler DOM yöntemi (referans
+için):** `integrations/explore_fintables_detail_dom.py` ile AKBNK
+üzerinde yapılan DOM taramasında, hisse detay/işlem ekranı sayfasında
+(`https://fintables.com/islem-ekrani?code={TICKER}`) bir TradingView
+grafik widget'ının `blob:` URL'li bir `<iframe>` içinde, göstergelerin
+ise bir `<canvas>` üzerinde (DOM'dan okunamaz) render edildiği, ama her
+göstergenin ayrıca `[data-name='legend-source-item']` seçicili bir
+"legend" metin kutusunda da göründüğü tespit edilmişti. Bu yöntem artık
+kullanılmıyor (yukarıdaki TradingView uç noktası yöntemine geçildi);
+ilgili kod (`read_technical_indicators`, `ensure_indicators_visible`
+vb.) `integrations/fintables_browser.py` içinde sadece referans/tekil
+test amacıyla duruyor.
 
 Farklı bir Radar görünümü/filtresi kullanmak isterseniz
 `config/watchlist.yaml` -> `fintables.screener_url` değerini kendi
@@ -121,13 +151,13 @@ Dosyanın aşağıdaki kolonları içermesi gerekir:
 |---|---|---|
 | `hisse` | Evet | Hisse kodu (örn. THYAO) |
 | `fiyat` | Evet | Güncel fiyat |
-| `rsi` | Opsiyonel | RSI (14) değeri. Fintables otomasyonunda grafikten okunur; okunamazsa nötr varsayımla hesaplanır (bkz. aşağıda). |
+| `rsi` | Opsiyonel | RSI (14) değeri. Fintables otomasyonunda TradingView'den alınır (bkz. yukarıda); alınamazsa nötr varsayımla hesaplanır (bkz. aşağıda). |
 | `macd_signal` | Opsiyonel | MACD histogramı (MACD-Sinyal farkı); pozitif/negatif. Aynı şekilde opsiyonel. |
-| `ema20` | Opsiyonel | 20 günlük EMA. Grafikte ayrı bir gösterge olarak eklenmiş olmalı (bkz. Fintables Kurulumu). |
+| `ema20` | Opsiyonel | 20 günlük EMA. TradingView'den alınır. |
 | `ema50` | Opsiyonel | 50 günlük EMA. |
 | `ema200` | Opsiyonel | 200 günlük EMA. |
 | `adx` | Opsiyonel | ADX (trend gücü). |
-| `atr_pct` | Opsiyonel | Günlük ATR'nin fiyata oranı (%). Fintables otomasyonu ATR'yi mutlak (TL) değer olarak okuyup fiyata bölerek yüzdeye çevirir. |
+| `atr_pct` | Opsiyonel | Günlük ATR'nin fiyata oranı (%). TradingView'den gelen ATR (mutlak) değeri fiyata bölünerek yüzdeye çevirilir. |
 | `volume_ratio` | Evet | Güncel hacim / ortalama hacim oranı |
 | `fk` | Evet | Fiyat/Kazanç oranı |
 | `pddd` | Evet | Piyasa Değeri/Defter Değeri oranı |
@@ -147,13 +177,14 @@ neden bu puanı verdi?" bölümünde "veri yok, nötr varsayılan kullanıldı"
 notuyla açıkça belirtilir.
 
 `rsi`, `macd_signal`, `ema20`, `ema50`, `ema200`, `adx`, `atr_pct` de
-v1.0 FINAL ile opsiyonel hale getirildi: Fintables otomasyonu bir
-hissenin grafiğinden bu göstergeleri okumaya çalışır, ama grafikte o
-gösterge eklenmemişse (bkz. "Fintables Kurulumu" -> EMA20/50/200 notu)
-eksik kalabilir. Eksik olduklarında `scoring/technical_engine.py` ve
-`scoring/momentum_engine.py` nötr/makul varsayımlarla çalışır (asla
-çökmez) ve "Johnny neden bu puanı verdi?" bölümünde hangi göstergelerin
-eksik olduğu açıkça listelenir.
+v1.0 FINAL ile opsiyonel hale getirildi: Fintables otomasyonu bu
+göstergeleri artık TradingView'den almaya çalışır (bkz. "Fintables
+Kurulumu"), ama bir hisse TradingView'de bulunamazsa ya da istek
+başarısız olursa eksik kalabilir. Eksik olduklarında
+`scoring/technical_engine.py` ve `scoring/momentum_engine.py`
+nötr/makul varsayımlarla çalışır (asla çökmez) ve "Johnny neden bu
+puanı verdi?" bölümünde hangi göstergelerin eksik olduğu açıkça
+listelenir.
 
 Diğer tüm alt skorlar kendi maksimum değerlerinin üzerine çıkarsa
 otomatik olarak sınırlanır (clip edilir); eksik/bozuk veri güvenli
@@ -253,9 +284,10 @@ johnny-terminal/
 ├── app.py                        # Streamlit arayüzü
 ├── data_mapper.py                 # CSV/Excel kolon eşleştirme (Fintables vb. için)
 ├── integrations/
-│   ├── fintables_browser.py      # Playwright ile Fintables tarayıcı otomasyonu (Radar okuma, ön eleme sonrası detay okuma, run_full_update orkestratörü)
+│   ├── fintables_browser.py      # Playwright ile Fintables Radar okuma + run_full_update orkestratörü (eski detay/legend-DOM fonksiyonları PASİF, referans için duruyor)
+│   ├── tradingview_indicators.py # TradingView'in herkese açık uç noktasından RSI/MACD/EMA/ADX/ATR çekme (tradingview-ta kütüphanesi, giriş gerektirmez)
 │   ├── explore_fintables_dom.py  # Tek seferlik DOM keşif aracı - Radar tablosu (terminalden çalıştırılır)
-│   ├── explore_fintables_detail_dom.py  # Tek seferlik DOM keşif aracı - hisse detay/Teknik Analiz sayfası
+│   ├── explore_fintables_detail_dom.py  # Tek seferlik DOM keşif aracı - hisse detay/Teknik Analiz sayfası (PASİF akış için referans)
 │   └── .sessions/                # Kayıtlı oturum (git'e girmez, .gitignore'da)
 ├── data/
 │   └── sample_data.csv           # Örnek veri (ham göstergeler, standart kolon adlarıyla)
@@ -274,19 +306,26 @@ johnny-terminal/
 
 ## Yol haritası
 
-Johnny Terminal'in ana veri kaynağı Fintables tarayıcı otomasyonudur;
-manuel CSV/Excel yükleme ve örnek veri seçenekleri yedek olarak
-duruyor. v1.0 FINAL ile Radar ön eleme + ilk 20 adayın detay/işlem
-ekranı sayfasındaki TradingView grafiğinden teknik veri okuma akışı
-tamamlandı ve gerçek bir hisse (AKBNK) üzerinde DOM taramasıyla
-doğrulandı (bkz. "Fintables Kurulumu").
+Johnny Terminal'in ana veri kaynağı Fintables Radar tarayıcı
+otomasyonudur (ön eleme için); manuel CSV/Excel yükleme ve örnek veri
+seçenekleri yedek olarak duruyor. v1.0 FINAL REVİZYONU ile teknik
+gösterge kaynağı Fintables'ın kırılgan legend-DOM okumasından
+TradingView'in herkese açık, giriş gerektirmeyen teknik analiz uç
+noktasına taşındı (bkz. "Fintables Kurulumu" ve
+`integrations/tradingview_indicators.py`). Akış artık: Radar → ilk 20
+aday → TradingView teknik veri → Johnny Score → Top 3.
+
+Bilinen sınırlama: Bu ortamdaki ağ kısıtlamaları nedeniyle
+`tradingview-ta` kütüphanesi gerçek TradingView API'sine karşı canlı
+test edilemedi; entegrasyon kod incelemesi + sahte (mock) modüllerle
+uçtan uca test edildi. Kendi makinenizde bir kez canlı deneyip
+günlükteki "TradingView ... teknik veri alındı/alınamadı" satırlarını
+kontrol etmeniz önerilir.
 
 Sıradaki olası adımlar:
 
-- EMA20/EMA50/EMA200 gibi göstergelerin grafiğe otomatik EKLENMESİ
-  (şu an kullanıcı bunu bir kez elle yapıp şablon olarak kaydediyor;
-  "gösterge ekle" arama/dialog akışının DOM taramasıyla doğrulanıp
-  otomatikleştirilmesi mümkün ama henüz yapılmadı).
+- TradingView entegrasyonunun gerçek API ile canlı doğrulanması
+  (yukarıdaki sınırlama nedeniyle henüz yapılamadı).
 - Radar tablosunun ~640 satırının tamamının güvenilir şekilde
   yüklenmesi (şu an best-effort bir kaydırma denemesi var; Fintables'ın
   grid bileşeni tamamen sanallaştırılmışsa yetersiz kalabilir).

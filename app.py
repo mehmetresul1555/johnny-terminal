@@ -143,12 +143,16 @@ with st.sidebar:
             st.rerun()
 
         if st.button("🔄 Fintables'tan Güncelle", use_container_width=True, type="primary"):
-            # v1.0 akışı: Radar oku -> ön eleme (ilk N aday) -> SADECE bu
-            # adayların Teknik Analiz sayfasını oku -> birleştir. 640
-            # hissenin tamamına GİRİLMEZ; her hisse arasında kısa bekleme
-            # var, bir hissede hata olursa o hisse atlanır/loglanır,
-            # sistem durmaz (bkz. integrations/fintables_browser.py ->
-            # run_full_update).
+            # v1.0 FINAL REVİZYONU akışı: Radar oku -> ilk N aday seç ->
+            # bu adayların RSI/MACD/EMA20/50/200/ADX/ATR değerlerini
+            # Fintables'tan değil TradingView'in herkese açık uç
+            # noktasından al -> birleştir (bkz. integrations/
+            # fintables_browser.py -> run_full_update ve integrations/
+            # tradingview_indicators.py). TradingView'den veri alınamayan
+            # bir hisse ATLANMAZ, sadece teknik alanları None kalır.
+            # Johnny Score hesaplama ve Top 3 seçimi bu adımın DIŞINDA,
+            # aşağıdaki Kolon Eşleştirme onayından sonra gerçekleşir
+            # (bkz. altındaki not).
             with st.status("Fintables'tan güncelleniyor...", expanded=True) as durum:
                 def _ilerleme_yaz(mesaj):
                     durum.write(mesaj)
@@ -159,6 +163,11 @@ with st.sidebar:
                     )
                     st.session_state["fintables_df_ham"] = df_fintables
                     st.session_state["fintables_hata_listesi"] = hata_listesi
+                    durum.write(
+                        "Ham veri hazır. Johnny Score hesaplaması, aşağıdaki "
+                        "Kolon Eşleştirme onaylandıktan sonra otomatik olarak "
+                        "yapılacak ve Top 3 gösterilecek."
+                    )
                     durum.update(
                         label=f"Tamamlandı: {len(df_fintables)} hisse işlendi.",
                         state="complete",
@@ -269,6 +278,9 @@ except ValueError as e:
     st.error(str(e))
     st.info(f"Gerekli kolonlar: {', '.join(REQUIRED_COLUMNS)} (opsiyonel: gerekce_notu, {', '.join(OPTIONAL_COLUMNS)})")
     st.stop()
+
+if kaynak == "Fintables (Tarayıcı Otomasyonu)" and st.session_state.get("fintables_df_ham") is not None:
+    st.success("✅ Johnny Score hesaplandı. Top 3 hazır.")
 
 # --- Top 3 ---
 st.subheader("🏆 Günün En İyi 3 Adayı")

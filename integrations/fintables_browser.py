@@ -38,41 +38,33 @@ veri satırları. `fetch_radar_table()` bu yapıya göre yazıldı ve
 "Getiri" sekmesi okunur; filtre/sekme değiştirme henüz yapılmıyor
 (bilinçli kapsam sınırlaması).
 
-DURUM (Hisse Detay / Teknik Analiz sayfası) - v1.0 FINAL, DOĞRULANDI:
-`integrations/explore_fintables_detail_dom.py` ile gerçek bir hissenin
-(AKBNK) sayfası tarandı ve şu yapı bulundu:
+DURUM (Hisse Detay / Teknik Analiz sayfası) - PASİF (v1.0 FINAL
+REVİZYONU itibarıyla `run_full_update()` tarafından KULLANILMIYOR):
 
-    - Hisse detay/işlem sayfası: https://fintables.com/islem-ekrani?code={TICKER}
-      (DETAY_URL_TEMPLATE_VARSAYILAN)
-    - Bu sayfada bir TradingView tabanlı grafik widget'ı, "blob:" URL'li
-      bir <iframe> içinde çalışıyor (iframe adı oturumdan oturuma
-      DEĞİŞİYOR, örn. "tradingview_eb8fa" - bu yüzden isme göre değil,
-      İÇERİĞİNE göre bulunuyor, bkz. `_teknik_grafik_frame_bul`).
-    - Eklenmiş her gösterge (RSI, MACD, EMA, ADX, ATR, Hacim...) bu
-      iframe içinde `[data-name="legend-source-item"]` seçiciyle
-      bulunan bir "legend" elementi olarak durur. Bu elementin
-      inner_text'i şu formattadır (satır satır):
-          RSI\n14\n46,65                        (başlık/parametre/değer)
-          MACD\n12 26 close 9 EMA EMA\n−0,36\n1,60\n1,96
-          EMA\n9 close 0\n76,93
-          ADX\n14 14\n21,61
-          ATR\n14\n2,84
-      Bu metin `_legend_metnini_ayikla` ile ayrıştırılıp
-      `read_technical_indicators` tarafından ilgili alanlara atanır.
-    - ÖNEMLİ SINIRLAMA: Mum grafiğinin kendisi ve gösterge ÇİZGİLERİ bir
-      <canvas> üzerinde render ediliyor (26 tane <canvas> bulundu) —
-      bunlar DOM'dan okunamaz. Ama yukarıdaki "legend" metin kutuları
-      gerçek DOM elementleridir ve okunabilir; ihtiyacımız olan tek
-      şey zaten bu metin kutularındaki güncel değerlerdir.
-    - EMA20/EMA50/EMA200 için üç AYRI EMA göstergesinin sayfada EKLENMİŞ
-      olması gerekir (varsayılan grafikte sadece tek bir EMA(9) vardı).
-      Bu, kullanıcının kendi Fintables/TradingView hesabında BİR KEZ
-      ayarlayıp (mümkünse "varsayılan şablon" olarak kaydedip) her
-      hissede otomatik görünmesini sağlaması gereken bir adımdır;
-      Johnny şu an göstergeyi otomatik EKLEMEZ (bkz.
-      `ensure_indicators_visible` - sadece VARLIĞINI kontrol eder ve
-      eksikse loglar), çünkü "gösterge ekle" arama/dialog akışı henüz
-      DOM taramasıyla doğrulanmadı.
+`integrations/explore_fintables_detail_dom.py` ile gerçek bir hissenin
+(AKBNK) sayfası tarandığında şu yapı bulunmuştu: hisse detay/işlem
+sayfası (https://fintables.com/islem-ekrani?code={TICKER}) içinde bir
+TradingView grafik widget'ı çalışıyor, göstergeler bir "legend" metin
+kutusunda (`[data-name="legend-source-item"]`) gösteriliyor. Bu metni
+okuyup ayrıştıran fonksiyonlar (`_teknik_grafik_frame_bul`,
+`_legend_metnini_ayikla`, `read_technical_indicators`,
+`ensure_indicators_visible`, `open_stock_detail`,
+`open_technical_analysis_tab`, `fetch_technical_for_symbol`,
+`fetch_technical_detail`) hâlâ modülde duruyor (geriye dönük uyumluluk/
+tekil test için), AMA `run_full_update()` artık bunları ÇAĞIRMIYOR.
+
+NEDEN PASİFLEŞTİRİLDİ: Bu yöntem güvenilir değildi - EMA20/EMA50/EMA200
+gibi göstergeler kullanıcı grafiğe elle eklemediyse hiç görünmüyordu,
+ve genel olarak Fintables'ın DOM yapısına (ve kullanıcının chart
+kurulumuna) fazlasıyla bağımlı, kırılgan bir yaklaşımdı.
+
+YENİ YAKLAŞIM: RSI/MACD/EMA20/EMA50/EMA200/ADX/ATR artık Fintables'tan
+DEĞİL, doğrudan TradingView'in kendi herkese açık teknik analiz veri
+uç noktasından alınıyor (bkz. integrations/tradingview_indicators.py,
+`tradingview-ta` kütüphanesi). Bu yöntem giriş/hesap gerektirmez,
+tarayıcı otomasyonu içermez - basit bir HTTP isteğidir. Fintables
+tarayıcı otomasyonu SADECE Radar ana tablosunu okumak için kullanılmaya
+devam ediyor.
 """
 
 import re
@@ -947,29 +939,41 @@ def fetch_technical_detail(ticker, config=None, headless=True, timeout_ms=30_000
 
 
 def run_full_update(config, on_progress=None):
-    """Johnny Terminal v1.0 FINAL akışı: Radar oku -> ön eleme (ilk N
-    aday) -> SADECE bu adayların detay/Teknik Analiz grafiğini oku ->
-    Radar + teknik veriyi birleştir. Nihai Johnny Score hesaplama ve
-    Top 3 gösterimi bu fonksiyonun DIŞINDA (app.py -> data_mapper ->
-    scoring/johnny_score) değişmeden yapılmaya devam eder; bu fonksiyon
-    sadece o hatta giden HAM (birleştirilmiş) DataFrame'i üretir.
+    """Johnny Terminal v1.0 FINAL REVİZYONU akışı: Radar oku -> ön eleme
+    (ilk N aday) -> bu adayların RSI/MACD/EMA20/EMA50/EMA200/ADX/ATR
+    değerlerini TradingView'den al -> Radar + teknik veriyi birleştir.
+    Nihai Johnny Score hesaplama ve Top 3 gösterimi bu fonksiyonun
+    DIŞINDA (app.py -> data_mapper -> scoring/johnny_score) değişmeden
+    yapılmaya devam eder; bu fonksiyon sadece o hatta giden HAM
+    (birleştirilmiş) DataFrame'i üretir.
 
-    Adımlar (her biri on_progress ile ayrıntılı loglanır):
-        1. Radar okundu
+    ÖNEMLİ (REVİZYON NEDENİ): Önceki sürüm teknik göstergeleri
+    Fintables'ın hisse detay sayfasındaki TradingView grafiğinin
+    "legend" metin kutularından okuyordu (bkz.
+    fetch_technical_for_symbol, read_technical_indicators - hâlâ
+    modülde duruyor ama artık BURADAN ÇAĞRILMIYOR/PASİF). Bu yöntem
+    güvenilir değildi: EMA20/EMA50/EMA200 gibi göstergeler grafiğe elle
+    eklenmemişse hiç görünmüyordu. Bunun yerine artık TradingView'in
+    KENDİ herkese açık teknik analiz uç noktası kullanılıyor (bkz.
+    integrations/tradingview_indicators.py) - giriş/hesap gerekmez,
+    tarayıcı otomasyonu yoktur, basit bir HTTP isteğidir.
+
+    Adımlar (her biri on_progress ile loglanır):
+        1. Fintables Radar okundu (tarayıcı otomasyonuyla, kayıtlı
+           oturum üzerinden - bu kısım DEĞİŞMEDİ)
         2. Ön eleme tamamlandı
         3. İlk N aday seçildi ("640 hisse detayına girme" kuralı burada
-           uygulanır - SADECE bu adayların detay sayfasına girilir)
-        4. Her aday için sırayla: {SEMBOL} detay açıldı -> Teknik Analiz
-           grafiği açıldı/açılamadı -> RSI/MACD/EMA20/EMA50/EMA200/ADX/
-           ATR okundu/okunamadı -> hisse tamamlandı/atlandı
-        5. Radar satırı + teknik verileri tek bir kayıtta birleştirir
-           (ATR mutlak değeri, Radar'daki fiyatla yüzdeye çevrilir).
+           uygulanır)
+        4. Her aday için: TradingView {SEMBOL} teknik veri alındı/alınamadı
+        5. Teknik veriler birleştirildi (Radar satırı + TradingView
+           göstergeleri tek bir kayıtta)
 
-    Tasarım notu: Radar + tüm aday detay sayfaları TEK bir tarayıcı
-    (browser/context/page) oturumunda, SIRAYLA (paralel değil) gezilir.
-    Bir adayda hata olursa (sayfa açılmaz, zaman aşımı, grafik yüklenmez
-    vb.) o aday ATLANIR ve loglanır; sistem asla durmaz, kalan adaylarla
-    devam eder.
+    Bir hisse için TradingView'den veri alınamazsa (ağ hatası, sembol
+    bulunamadı vb.) o hisse ATLANMAZ - sadece teknik alanları None
+    kalır ve loglanır; scoring katmanı bunu nötr varsayımlarla ele alır
+    (bkz. scoring/johnny_score.py). `hata_listesi` bu akışta sadece
+    yapısal bir sorun olursa (örn. hisse kodu kolonu hiç bulunamazsa)
+    doldurulur - normal koşullarda genelde boştur.
 
     Args:
         config: watchlist.yaml içeriği (dict)
@@ -980,22 +984,17 @@ def run_full_update(config, on_progress=None):
 
     Returns:
         (df_ham: pd.DataFrame, hata_listesi: list[tuple[str, str]])
-            df_ham: Radar + teknik verilerin birleştiği, data_mapper'a
-                gönderilmeye hazır ham DataFrame (bir satır = bir aday
-                hisse). Teknik göstergeler eksikse ilgili hücreler
-                boş (None/NaN) kalır - scoring katmanı bunu nötr
-                varsayımlarla ele alır (bkz. scoring/johnny_score.py).
-            hata_listesi: [(hisse_kodu, hata_mesaji), ...] — sayfası
-                HİÇ açılamayan (tamamen atlanan) hisseler ve nedenleri.
+            df_ham: Radar + TradingView teknik verilerinin birleştiği,
+                data_mapper'a gönderilmeye hazır ham DataFrame (bir
+                satır = bir aday hisse).
+            hata_listesi: [(hisse_kodu, hata_mesaji), ...] — yapısal
+                nedenlerle tamamen değerlendirilemeyen hisseler.
 
     Raises:
         FintablesError: kayıtlı oturum yoksa, Radar tablosu hiç
             okunamazsa (bu durumda ön eleme yapacak veri de yoktur),
-            ya da hiçbir aday için kayıt üretilemezse.
+            ya da hisse kodu kolonu bulunamazsa.
     """
-    import random
-    import time
-
     def _bildir(mesaj):
         print(f"[fintables_browser] {mesaj}")
         if on_progress:
@@ -1021,113 +1020,82 @@ def run_full_update(config, on_progress=None):
     top_n = on_eleme_cfg.get("top_n", 20)
 
     detay_cfg = fintables_cfg.get("detay", {}) or {}
-    bekleme_min = detay_cfg.get("bekleme_min_sn", 2.0)
-    bekleme_max = detay_cfg.get("bekleme_max_sn", 4.0)
     radar_timeout_ms = detay_cfg.get("timeout_ms", 30_000)
 
-    hata_listesi = []
-    birlesik_kayitlar = []
+    tv_cfg = config.get("tradingview", {}) or {}
+    tv_screener = tv_cfg.get("screener", "turkey")
+    tv_exchange = tv_cfg.get("exchange", "BIST")
+    tv_interval = tv_cfg.get("interval", "1d")
+    tv_timeout = tv_cfg.get("timeout_sn", 10)
 
+    hata_listesi = []
+
+    # 1) Radar ana tablosunu oku (SADECE bunun için tarayıcı gerekiyor -
+    # teknik veri artık TradingView'den geldiği için tarayıcıyı adaylar
+    # arasında açık tutmaya gerek yok, Radar okunur okunmaz kapatılır).
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
             context = browser.new_context(storage_state=str(SESSION_PATH))
             page = context.new_page()
 
-            # 1) Radar ana tablosunu oku
-            _bildir(f"Radar okunuyor: {radar_url}")
+            _bildir(f"Fintables Radar okunuyor: {radar_url}")
             page.goto(radar_url, timeout=radar_timeout_ms)
             df_radar = _radar_sayfasindan_df_olustur(page, timeout_ms=radar_timeout_ms)
-            _bildir(f"Radar okundu: {len(df_radar)} hisse.")
-
-            # 2-3) Ön eleme: ilk top_n aday (640 hissenin TAMAMI DEĞİL)
-            try:
-                adaylar = pre_screen_candidates(df_radar, top_n=top_n)
-            except ValueError as e:
-                browser.close()
-                raise FintablesError(str(e)) from e
-
-            from scoring import pre_screen as _pre_screen_mod
-            hisse_kolonu = _pre_screen_mod.find_ticker_column(adaylar.columns)
-            if hisse_kolonu is None:
-                browser.close()
-                raise FintablesError(
-                    "Ön elemeden geçen adaylarda hisse kodu kolonu "
-                    "bulunamadı; teknik detay sayfalarına hangi hisse "
-                    "için gidileceği belirlenemiyor."
-                )
-
-            fiyat_kolonu = _kolon_bul_esnek(adaylar.columns, ["fiyat", "son fiyat", "kapanis", "close"])
-
-            aday_kodlari = [str(x).strip() for x in adaylar[hisse_kolonu].tolist()]
-            _bildir(
-                f"Ön eleme tamamlandı, {len(aday_kodlari)} aday seçildi: "
-                f"{', '.join(aday_kodlari)}"
-            )
-
-            # 4-5) SADECE bu adayların detay/Teknik Analiz grafiğine gir
-            toplam = len(adaylar)
-            for i, (_, aday_satiri) in enumerate(adaylar.iterrows(), start=1):
-                ticker = str(aday_satiri[hisse_kolonu]).strip()
-                _bildir(f"[{i}/{toplam}] {ticker} işleniyor...")
-
-                try:
-                    teknik = fetch_technical_for_symbol(page, ticker, config, on_progress=on_progress)
-                except Exception as e:
-                    hata_mesaji = str(e)
-                    _bildir(f"[{i}/{toplam}] {ticker} atlandı: {hata_mesaji}")
-                    hata_listesi.append((ticker, hata_mesaji))
-                    # Bir sonraki adaya geçmeden önce de bekleme uygulanır
-                    # (site üzerinde ısrarlı/art arda hızlı istek olmasın).
-                    if i < toplam:
-                        time.sleep(random.uniform(bekleme_min, bekleme_max))
-                    continue
-
-                # ATR mutlak değerini yüzdeye çevir (Radar'daki fiyatla)
-                atr_ham = teknik.pop("atr_ham", None)
-                fiyat_degeri = None
-                if fiyat_kolonu:
-                    fiyat_degeri = _tr_sayi(aday_satiri.get(fiyat_kolonu))
-                if atr_ham is not None and fiyat_degeri:
-                    teknik["atr_pct"] = round(atr_ham / fiyat_degeri * 100, 2)
-                else:
-                    teknik["atr_pct"] = None
-
-                kayit = aday_satiri.to_dict()
-                kayit.update(teknik)
-                kayit["hisse"] = ticker
-                birlesik_kayitlar.append(kayit)
-
-                _bildir(f"[{i}/{toplam}] {ticker} tamamlandı.")
-
-                # Hisseler arasında kısa, rastgele bekleme (yavaş ve
-                # güvenli çalışma isteği).
-                if i < toplam:
-                    time.sleep(random.uniform(bekleme_min, bekleme_max))
+            _bildir(f"Fintables Radar okundu: {len(df_radar)} hisse.")
 
             browser.close()
     except FintablesError:
         raise
     except Exception as e:
         raise FintablesError(
-            f"Fintables tam güncelleme akışı sırasında beklenmeyen bir "
-            f"hata oluştu: {e}\n"
+            f"Fintables Radar sayfası açılırken/okunurken hata oluştu: {e}\n"
             "Oturumunuzun süresi dolmuş olabilir; 'Tarayıcıyı Aç ve Giriş "
             "Yap' ile yeniden giriş yapmayı deneyin."
         ) from e
 
-    if not birlesik_kayitlar:
+    # 2-3) Ön eleme: ilk top_n aday (640 hissenin TAMAMI DEĞİL)
+    adaylar = pre_screen_candidates(df_radar, top_n=top_n)
+
+    from scoring import pre_screen as _pre_screen_mod
+    hisse_kolonu = _pre_screen_mod.find_ticker_column(adaylar.columns)
+    if hisse_kolonu is None:
         raise FintablesError(
-            "Ön elemeden geçen hiçbir aday için kayıt üretilemedi "
-            f"({len(hata_listesi)} hisse atlandı). Detay sayfalarının "
-            "tamamı açılamadıysa oturumunuzun süresi dolmuş olabilir; "
-            "'Tarayıcıyı Aç ve Giriş Yap' ile yeniden giriş yapmayı deneyin."
+            "Ön elemeden geçen adaylarda hisse kodu kolonu bulunamadı; "
+            "TradingView'e hangi hisseler için istek atılacağı "
+            "belirlenemiyor."
         )
 
+    aday_kodlari = [str(x).strip() for x in adaylar[hisse_kolonu].tolist()]
     _bildir(
-        f"Tamamlandı: {len(birlesik_kayitlar)} hisse başarıyla işlendi, "
-        f"{len(hata_listesi)} hisse atlandı."
+        f"İlk {len(aday_kodlari)} aday seçildi: {', '.join(aday_kodlari)}"
     )
 
-    df_ham = pd.DataFrame(birlesik_kayitlar)
+    # 4) TradingView'den teknik göstergeleri al (tarayıcı GEREKMEZ - basit
+    # bir HTTP isteği; bkz. integrations/tradingview_indicators.py)
+    from integrations import tradingview_indicators
+
+    try:
+        tv_df = tradingview_indicators.fetch_indicators_for_candidates(
+            aday_kodlari, screener=tv_screener, exchange=tv_exchange,
+            interval=tv_interval, on_progress=on_progress, timeout=tv_timeout,
+        )
+    except tradingview_indicators.TradingViewIndicatorError as e:
+        raise FintablesError(str(e)) from e
+
+    # 5) Radar satırları + TradingView göstergelerini birleştir. Eşleştirme
+    # hisse kodunun normalize edilmiş (boşluksuz, büyük harf) haliyle
+    # yapılır - Radar'daki kolon adı ne olursa olsun (örn. "640 Hisse").
+    adaylar = adaylar.copy()
+    adaylar["_tv_anahtar"] = adaylar[hisse_kolonu].astype(str).str.strip().str.upper()
+    tv_df["_tv_anahtar"] = tv_df["hisse"].astype(str).str.strip().str.upper()
+
+    df_ham = adaylar.merge(
+        tv_df.drop(columns=["hisse"]), on="_tv_anahtar", how="left"
+    ).drop(columns=["_tv_anahtar"])
+    df_ham["hisse"] = df_ham[hisse_kolonu]
+
+    _bildir("Teknik veriler birleştirildi.")
+    _bildir(f"Tamamlandı: {len(df_ham)} hisse işlendi.")
+
     return df_ham, hata_listesi

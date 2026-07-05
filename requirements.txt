@@ -4,3 +4,4 @@ PyYAML>=6.0
 openpyxl>=3.1
 playwright>=1.40
 lxml>=5.0
+tradingview-ta>=3.3.0

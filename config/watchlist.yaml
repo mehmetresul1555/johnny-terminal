@@ -72,53 +72,44 @@ fintables:
 
   # v1.0 FINAL "final akış": Radar'daki ~640 hisse arasından basit bir ön
   # elemeyle (bkz. scoring/pre_screen.py) ilk top_n aday seçilir; SADECE
-  # bunların detay/Teknik Analiz sayfasına girilir (640 hissenin tamamına
-  # DEĞİL).
+  # bu adayların teknik verisi alınır (640 hissenin tamamı DEĞİL). Teknik
+  # veri artık Fintables'tan değil TradingView'den geliyor (bkz. aşağıdaki
+  # tradingview: bloğu ve integrations/tradingview_indicators.py).
   pre_screen:
     top_n: 20
 
-  # v1.0 FINAL: Ön elemeden geçen adayların detay/işlem ekranı sayfası
-  # ayarları. url_template ve legend_item_selector,
-  # integrations/explore_fintables_detail_dom.py ile AKBNK üzerinde
-  # yapılan gerçek bir DOM taramasıyla DOĞRULANDI (bkz.
-  # integrations/fintables_browser.py modül docstring'i).
+  # v1.0 FINAL REVİZYONU: RSI/MACD/EMA/ADX/ATR değerlerini Fintables'ın
+  # hisse detay sayfasındaki TradingView grafiğinin "legend" metin
+  # kutularından okumak güvenilir bulunmadı - EMA20/EMA50/EMA200 gibi
+  # göstergeler grafiğe elle eklenmemişse hiç görünmüyordu. Bu yüzden
+  # `run_full_update()` artık bu alt bölümü KULLANMIYOR (PASİF).
+  # Aşağıdaki ayarlar integrations/fintables_browser.py içindeki
+  # fetch_technical_detail/fetch_technical_for_symbol fonksiyonlarında
+  # (tekil test/geriye dönük uyumluluk için) hâlâ duruyor, sadece ana
+  # akışta çağrılmıyor. Teknik veri için bkz. aşağıdaki `tradingview:`.
   detay:
-    # {ticker} yerine hisse kodu (örn. SASA) konur. DOĞRULANDI: bu sayfa,
-    # RSI/MACD/EMA/ADX/ATR göstergelerini içeren TradingView grafiğini
-    # gösteriyor.
     url_template: "https://fintables.com/islem-ekrani?code={ticker}"
-
-    # DOĞRULANDI: grafikteki her gösterge (RSI/MACD/EMA/ADX/ATR/Hacim...)
-    # bu seçiciyle bulunan bir "legend" (üst bilgi) metin kutusu olarak
-    # durur. Grafiğin/çizgilerin kendisi <canvas>'tır ve okunamaz, ama bu
-    # metin kutuları gerçek DOM'dur - integrations/fintables_browser.py
-    # bunları ayrıştırıp (bkz. _legend_metnini_ayikla) rsi/macd_signal/
-    # ema20/ema50/ema200/adx/atr alanlarına atar.
     legend_item_selector: "[data-name='legend-source-item']"
-
-    # Grafiğin (iframe + legend elementleri) yüklenmesi için azami
-    # bekleme (ms).
     grafik_bekleme_ms: 10000
-
-    # ÖNEMLİ: EMA20/EMA50/EMA200'ün üç AYRI gösterge olarak grafiğe
-    # EKLENMİŞ olması gerekir (RSI/MACD/ADX/ATR ile birlikte). Johnny
-    # bunları otomatik EKLEMEYE ÇALIŞMAZ (bkz. ensure_indicators_visible
-    # docstring'i - "gösterge ekle" arama/dialog akışı henüz DOM
-    # taramasıyla doğrulanmadı, doğrulanmamış tıklamalar riskli olur).
-    # Bunun yerine: Fintables/TradingView hesabınızda RSI, MACD,
-    # EMA(20), EMA(50), EMA(200), ADX, ATR göstergelerini BİR KEZ elle
-    # ekleyin ve mümkünse "varsayılan şablon" olarak kaydedin - bu genelde
-    # hesap/oturum boyunca korunur ve her hissede otomatik görünür.
-    # Eksik kalan göstergeler nötr varsayımla hesaplanır, sistem çökmez;
-    # sadece o gösterge "Johnny neden bu puanı verdi?" bölümünde
-    # "eksik" olarak belirtilir.
-
-    # Her hisse arasında kısa, rastgele bir bekleme (saniye) - "yavaş ve
-    # güvenli" çalışma isteği için.
     bekleme_min_sn: 2.0
     bekleme_max_sn: 4.0
-
-    # Radar sayfası açma/element bekleme zaman aşımı (ms)
+    # Radar sayfası açma/element bekleme zaman aşımı (ms) - bu alan hâlâ
+    # run_full_update() tarafından Radar sayfası için kullanılıyor.
     timeout_ms: 30000
 
   note: "Otomasyonu etkinleştirmeden önce Fintables'ın güncel kullanım şartlarını kontrol edin. Johnny yalnızca kullanıcının kendi Pro hesabıyla zaten görebildiği sayfaları, manuel tetikleme ile (arka planda otomatik/periyodik tarama yapmadan) okur. Şimdilik sadece sayfa ilk açıldığında görünen 'Getiri' sekmesi okunur; filtre/sekme değiştirme henüz yapılmıyor."
+
+# v1.0 FINAL REVİZYONU: Ön elemeden geçen adayların RSI/MACD/EMA20/
+# EMA50/EMA200/ADX/ATR değerleri artık TradingView'in herkese açık
+# teknik analiz uç noktasından alınır (integrations/
+# tradingview_indicators.py, `tradingview-ta` kütüphanesi ile). Giriş/
+# hesap GEREKMEZ, tarayıcı otomasyonu YOKTUR - basit bir HTTP isteğidir.
+tradingview:
+  # Borsa İstanbul hisseleri için TradingView'in kullandığı screener/
+  # exchange değerleri (bkz. https://python-tradingview-ta.readthedocs.io).
+  screener: "turkey"
+  exchange: "BIST"
+  # Zaman dilimi: 1d (günlük), 1h, 4h, 1W vb. - bkz. tradingview_ta.Interval
+  interval: "1d"
+  # İstek zaman aşımı (saniye)
+  timeout_sn: 10
