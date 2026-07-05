@@ -40,16 +40,25 @@ STANDARD_COLUMNS = [
 # - haber_puani/kurumsal_puani/piyasa_rejimi Fintables'tan hiçbir zaman
 #   gelmez (Johnny'nin kendi öznel puanlarıdır); eksik olduklarında
 #   scoring/johnny_score.py nötr bir varsayılan (5/10) kullanır.
-# - rsi/macd_signal/ema20/ema50/ema200/adx/atr_pct (v1.0 FINAL):
-#   Fintables tarayıcı otomasyonu bunları hisse detay/Teknik Analiz
-#   sayfasından okumaya çalışır, ama gösterge bir canvas/grafik üzerinde
-#   render ediliyorsa DOM'dan okunamayabilir. Eksik olduklarında
-#   scoring motorları nötr/varsayılan değerlerle çalışır, sistem çökmez;
-#   "Johnny neden bu puanı verdi?" bölümünde açıkça belirtilir.
+# - rsi/macd_signal/ema20/ema50/ema200/adx/atr_pct: artık TradingView'in
+#   herkese açık uç noktasından alınıyor (integrations/
+#   tradingview_indicators.py); bir hisse TradingView'de bulunamazsa
+#   eksik kalabilir. Eksik olduklarında scoring motorları nötr/varsayılan
+#   değerlerle çalışır, sistem çökmez; "Johnny neden bu puanı verdi?"
+#   bölümünde açıkça belirtilir.
+# - fk/pddd/roe/net_borc_favok (v1.0 FINAL REVİZYONU): Fintables'ın
+#   şirket/temel analiz sayfası (fintables.com/sirketler/{TICKER}) bot
+#   koruması (Cloudflare) arkasında olduğu için otomatik okunamıyor;
+#   bunun yerine hisse detay sayfasındaki "Karne" sekmesi denenir
+#   (integrations/fintables_browser.py -> fetch_fundamental_for_symbol).
+#   Karne sekmesi bulunamaz/okunamazsa (ya da bot koruması çıkarsa) bu
+#   alanlar None kalır; scoring/fundamental_engine.py nötr (2.5/5)
+#   puanlarla çalışır, sistem çökmez.
 OPTIONAL_STANDARD_COLUMNS = [
     "yeni_is_iliskisi", "gerekce_notu",
     "haber_puani", "kurumsal_puani", "piyasa_rejimi",
     "rsi", "macd_signal", "ema20", "ema50", "ema200", "adx", "atr_pct",
+    "fk", "pddd", "roe", "net_borc_favok",
 ]
 
 # Her Johnny kolonu için bilinen Türkçe/İngilizce takma adlar (normalize

@@ -4,10 +4,21 @@ Fundamental Engine
 Johnny Score'un "Bilanço/Temel" alt skorunu (maksimum 20 puan) ham bilanço
 verilerinden hesaplar.
 
-Girdi kolonları (CSV'den gelir):
+Girdi kolonları (CSV'den ya da Fintables "Karne" sekmesinden gelir):
     fk, pddd, roe, net_borc_favok
 
-Puan dağılımı (toplam 20):
+v1.0 FINAL REVİZYONU: Bu dört kolon artık OPSİYONELDİR. Fintables'ın
+şirket/temel analiz sayfası (fintables.com/sirketler/{TICKER}) bot
+koruması (Cloudflare) arkasında olduğu için otomatik okunamıyor; bunun
+yerine hisse detay sayfasındaki "Karne" sekmesi denenir
+(integrations/fintables_browser.py -> fetch_fundamental_for_symbol).
+Karne sekmesi bulunamaz/okunamazsa (ya da bot koruması çıkarsa) bu
+alanlar None kalır - sistem ÇÖKMEZ, her alan için NÖTR (yarı puan)
+bir varsayım kullanılır ve "Johnny neden bu puanı verdi?" bölümünde
+"Fundamental veri eksik, nötr varsayım kullanıldı" notuyla açıkça
+belirtilir (bkz. scoring/johnny_score.py -> _eksik_fundamental_alanlar).
+
+Puan dağılımı (toplam 20, her biri eksikse 2.5/5 nötr):
     - F/K            : 5 puan  (düşük F/K => yüksek puan)
     - PD/DD          : 5 puan  (düşük PD/DD => yüksek puan)
     - ROE            : 5 puan  (yüksek özkaynak karlılığı => yüksek puan)
@@ -15,7 +26,23 @@ Puan dağılımı (toplam 20):
 """
 
 MAX_SCORE = 20
-REQUIRED_COLUMNS = ["fk", "pddd", "roe", "net_borc_favok"]
+# v1.0 FINAL REVİZYONU: hiçbiri artık zorunlu değil (bkz. modül docstring'i).
+REQUIRED_COLUMNS = []
+
+# Her alt bileşenin nötr (veri yoksa kullanılan) puanı: maksimumun tam
+# yarısı - ne olumlu ne olumsuz bir sinyal.
+NOTR_ALT_PUAN = 2.5
+
+
+def _deger_eksik_mi(deger):
+    """None, boş string ya da NaN ise 'eksik' kabul edilir."""
+    if deger is None:
+        return True
+    try:
+        f = float(deger)
+    except (TypeError, ValueError):
+        return str(deger).strip() == ""
+    return f != f  # NaN kontrolü
 
 
 def _safe_float(value, default=0.0):
@@ -34,7 +61,10 @@ def _clip(value, lo, hi):
 
 def _fk_score(fk):
     """F/K negatif veya sıfırsa (zarar eden şirket) puan verilmez. Düşük
-    F/K (ucuz) daha yüksek puan alır; F/K 5 ve altı tam puan, 15 ve üzeri 0."""
+    F/K (ucuz) daha yüksek puan alır; F/K 5 ve altı tam puan, 15 ve üzeri 0.
+    Veri eksikse nötr (2.5/5) puan döner."""
+    if _deger_eksik_mi(fk):
+        return NOTR_ALT_PUAN
     fk = _safe_float(fk, default=-1)
     if fk <= 0:
         return 0.0
@@ -43,7 +73,9 @@ def _fk_score(fk):
 
 def _pddd_score(pddd):
     """PD/DD negatif veya sıfırsa puan verilmez. 0.5 ve altı tam puan,
-    2.5 ve üzeri 0 puan."""
+    2.5 ve üzeri 0 puan. Veri eksikse nötr (2.5/5) puan döner."""
+    if _deger_eksik_mi(pddd):
+        return NOTR_ALT_PUAN
     pddd = _safe_float(pddd, default=2.5)
     if pddd <= 0:
         return 0.0
@@ -51,21 +83,29 @@ def _pddd_score(pddd):
 
 
 def _roe_score(roe):
-    """ROE %30 ve üzeri tam puan alır, %0 ve altı 0 puan."""
+    """ROE %30 ve üzeri tam puan alır, %0 ve altı 0 puan. Veri eksikse
+    nötr (2.5/5) puan döner."""
+    if _deger_eksik_mi(roe):
+        return NOTR_ALT_PUAN
     roe = _safe_float(roe)
     return _clip(roe / 30 * 5, 0, 5)
 
 
 def _net_debt_score(net_borc_favok):
     """Net Borç/FAVÖK 0 ve altı (net nakit pozisyonu) tam puan, 5x ve
-    üzeri yüksek kaldıraç kabul edilip 0 puan alır."""
+    üzeri yüksek kaldıraç kabul edilip 0 puan alır. Veri eksikse nötr
+    (2.5/5) puan döner."""
+    if _deger_eksik_mi(net_borc_favok):
+        return NOTR_ALT_PUAN
     net_borc_favok = _safe_float(net_borc_favok, default=5.0)
     return _clip(5 - net_borc_favok, 0, 5)
 
 
 def compute_fundamental_score(row):
     """Bir hisse satırından (pandas Series/dict) bilanço/temel skoru
-    hesaplar.
+    hesaplar. fk/pddd/roe/net_borc_favok'tan herhangi biri eksikse
+    (None/NaN/boş) o bileşen için nötr (2.5/5) puan kullanılır - hiçbir
+    zaman çökmez.
 
     Returns:
         (score: float 0-20, detail: dict)

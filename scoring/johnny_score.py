@@ -113,6 +113,21 @@ TEKNIK_GOSTERGE_ETIKETLERI = {
     "atr_pct": "ATR",
 }
 
+# v1.0 FINAL REVİZYONU: Fintables'ın şirket/temel analiz sayfası
+# (fintables.com/sirketler/{TICKER}) bot koruması (Cloudflare) arkasında
+# olduğu için otomatik okunamıyor. Bunun yerine hisse detay sayfasındaki
+# "Karne" sekmesi denenir (integrations/fintables_browser.py ->
+# fetch_fundamental_for_symbol); bulunamaz/okunamazsa bu alanlar None
+# kalır. fundamental_engine bu durumda zaten nötr (2.5/5) puanlarla
+# çalışır (asla çökmez); burada sadece HANGİ alanların eksik olduğu
+# tespit edilip kullanıcıya "neden bu puan" açıklamasında gösterilir.
+FUNDAMENTAL_ALAN_ETIKETLERI = {
+    "fk": "F/K",
+    "pddd": "PD/DD",
+    "roe": "ROE",
+    "net_borc_favok": "Net Borç/FAVÖK",
+}
+
 
 def _deger_eksik_mi(deger):
     """Bir hücrenin skorlama açısından 'eksik' sayılıp sayılmadığını
@@ -139,6 +154,21 @@ def _eksik_teknik_gostergeler(row):
     """
     eksikler = []
     for kolon, etiket in TEKNIK_GOSTERGE_ETIKETLERI.items():
+        if _deger_eksik_mi(row.get(kolon)):
+            eksikler.append(etiket)
+    return eksikler
+
+
+def _eksik_fundamental_alanlar(row):
+    """Bir hisse satırında F/K, PD/DD, ROE, Net Borç/FAVÖK'ten
+    hangilerinin eksik (None/NaN/boş) olduğunu tespit eder.
+
+    Returns:
+        list[str]: eksik alanların kullanıcı dostu etiketleri
+        (örn. ["F/K", "ROE"]). Hiçbiri eksik değilse boş liste.
+    """
+    eksikler = []
+    for kolon, etiket in FUNDAMENTAL_ALAN_ETIKETLERI.items():
         if _deger_eksik_mi(row.get(kolon)):
             eksikler.append(etiket)
     return eksikler
@@ -235,6 +265,7 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
     )
 
     eksik_teknik_gostergeler = _eksik_teknik_gostergeler(row)
+    eksik_fundamental_alanlar = _eksik_fundamental_alanlar(row)
 
     clipped = {
         "teknik_skor": teknik_skor,
@@ -271,6 +302,7 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
         "rule_bonus": rule_bonus,
         "fired_rules": fired_rules,
         "eksik_teknik_gostergeler": eksik_teknik_gostergeler,
+        "eksik_fundamental_alanlar": eksik_fundamental_alanlar,
     }
 
 
@@ -372,6 +404,7 @@ def generate_reason_bullets(score_result):
     rule_bonus = score_result["rule_bonus"]
 
     eksik_teknik_gostergeler = score_result.get("eksik_teknik_gostergeler", [])
+    eksik_fundamental_alanlar = score_result.get("eksik_fundamental_alanlar", [])
 
     bullets = []
     for key in ["teknik_skor", "momentum_skor", "bilanco_skor", "haber_skor", "kurumsal_skor", "piyasa_rejimi_skor"]:
@@ -380,6 +413,8 @@ def generate_reason_bullets(score_result):
             etiket += " (veri yok, nötr varsayılan kullanıldı)"
         elif key in ("teknik_skor", "momentum_skor") and eksik_teknik_gostergeler:
             etiket += " (bazı göstergeler eksik, kısmen varsayılan kullanıldı)"
+        elif key == "bilanco_skor" and eksik_fundamental_alanlar:
+            etiket += " (Fundamental veri eksik, nötr varsayım kullanıldı)"
         else:
             etiket += " (taban analiz)"
         bullets.append(etiket)
@@ -389,6 +424,13 @@ def generate_reason_bullets(score_result):
             "Teknik göstergelerden eksik olanlar: "
             f"{', '.join(eksik_teknik_gostergeler)} (Fintables Teknik Analiz "
             "sayfasından okunamadı; nötr/varsayılan değerlerle hesaplandı)"
+        )
+
+    if eksik_fundamental_alanlar:
+        bullets.append(
+            "Fundamental veri eksik, nötr varsayım kullanıldı: "
+            f"{', '.join(eksik_fundamental_alanlar)} (Fintables Karne "
+            "sekmesinden okunamadı ya da bot koruması nedeniyle atlandı)"
         )
 
     bullets.append(f"Taban puan (damping uygulanmış): {base_score:.1f} puan")

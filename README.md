@@ -69,9 +69,10 @@ oturumu üzerinden ilgili sayfalar açılıp okunur.
 3. Ön elemeden geçen **ilk 20 aday** (`config/watchlist.yaml` -> `fintables.pre_screen.top_n`) seçilir. Radar okuma bitince tarayıcı hemen kapatılır.
 4. Bu 20 aday için RSI, MACD (histogram), EMA20/50/200, ADX, ATR% **Fintables'tan değil doğrudan TradingView'in herkese açık teknik analiz uç noktasından** (`integrations/tradingview_indicators.py`, `tradingview-ta` kütüphanesi) alınır — önce tek bir toplu istekle, o başarısız olursa hisse başına tek tek denenerek. Giriş/hesap/tarayıcı gerekmez, basit bir HTTP isteğidir.
 5. TradingView'den veri alınamayan bir hisse için (sembol bulunamadı, zaman aşımı vb.) o hissenin teknik alanları **None** bırakılır ve loglanır; hisse yine de listede kalır, ATLANMAZ.
-6. Birleşen ham veri, mevcut Kolon Eşleştirme adımına gönderilir; oradan Johnny Score hesaplanır ve Top 3 gösterilir.
+6. Aynı 20 aday için F/K, PD/DD, ROE, Net Borç/FAVÖK, hisse detay sayfasındaki **"Karne" sekmesinden** okunmaya çalışılır (bkz. aşağıda "Fundamental veri kaynağı"). Bot koruması çıkarsa ya da sekme okunamazsa bu alanlar **None** bırakılır; hisse yine ATLANMAZ.
+7. Birleşen ham veri, mevcut Kolon Eşleştirme adımına gönderilir; oradan Johnny Score hesaplanır ve Top 3 gösterilir.
 
-Her adım (Fintables Radar okundu, ilk 20 aday seçildi, TradingView {SEMBOL} teknik veri alındı/alınamadı, teknik veriler birleştirildi, Johnny Score hesaplandı, Top 3 hazır) buton altında canlı bir günlük olarak gösterilir.
+Her adım (Fintables Radar okundu, ilk 20 aday seçildi, TradingView {SEMBOL} teknik veri alındı/alınamadı, Karne'den F/K/PD/DD/ROE/Net Borç/FAVÖK okundu/okunamadı, teknik ve fundamental veriler birleştirildi, Johnny Score hesaplandı, Top 3 hazır) buton altında canlı bir günlük olarak gösterilir.
 
 **PASİF olan eski yöntem:** v1.0 FINAL'de RSI/MACD/EMA/ADX/ATR, Fintables'ın hisse detay/işlem ekranı sayfasındaki TradingView grafik widget'ının "legend" metin kutularından okunuyordu (`integrations/fintables_browser.py` içindeki `read_technical_indicators`, `fetch_technical_detail` vb.). Bu yöntem güvenilir bulunmadı: EMA20/EMA50/EMA200 gibi göstergeler kullanıcı grafiğe elle eklemediyse hiç görünmüyordu, ayrıca canvas/iframe tabanlı kırılgan bir DOM bağımlılığıydı. Bu fonksiyonlar geriye dönük referans/tekil test için dosyada duruyor ama `run_full_update()` artık bunları ÇAĞIRMIYOR.
 
@@ -108,6 +109,39 @@ test yapılamadı — `pip install tradingview-ta` sonrası kendi
 makinenizde bir kez "🔄 Fintables'tan Güncelle" ile deneyip günlükteki
 "TradingView ... teknik veri alındı/alınamadı" satırlarını kontrol
 etmeniz önerilir.
+
+**Fundamental veri kaynağı (Karne sekmesi) ve bot koruması bulgusu:**
+Fintables'ın ayrı şirket/temel analiz sayfası
+(`https://fintables.com/sirketler/{TICKER}`) F/K, PD/DD, ROE, Net
+Borç/FAVÖK gibi verileri gösteriyor, ama bu sayfa **Cloudflare bot
+koruması** arkasında — otomasyonla açıldığında "Just a moment...
+Performing security verification" (Cloudflare Managed Challenge)
+gösteriyor (bkz. `integrations/explore_fintables_fundamental_dom.py`
+ile yapılan canlı doğrulama). **Projenin kuralı gereği bu koruma
+aşılmaya ÇALIŞILMIYOR** (CAPTCHA/bot-koruması aşma girişimi yasak).
+
+Bunun yerine, zaten erişilebilir olduğu bilinen hisse detay sayfasındaki
+**"Karne" sekmesi** deneniyor (`integrations/fintables_browser.py` ->
+`fetch_fundamental_for_symbol`): sayfa açılır, bot koruması işareti
+(`"just a moment"`, `"cloudflare"`, `"security verification"` vb.
+anahtar kelimeler) taranır — çıkarsa hemen durulur ve o hisse için bu
+alanlar `None` bırakılır. Bot koruması yoksa "Karne" sekmesi bulunup
+tıklanmaya çalışılır, açılırsa görünen metinden F/K, PD/DD, ROE, Net
+Borç/FAVÖK esnek bir metin araması ile ayıklanmaya çalışılır. Herhangi
+bir adımda başarısız olunursa (sekme yok, tıklanamadı, değerler
+ayıklanamadı) o hissenin bu alanları `None` kalır — **sistem çökmez,
+hisse listeden atılmaz**; `scoring/fundamental_engine.py` bu durumda
+nötr (2.5/5 = yarı puan) bir varsayımla çalışır ve "Johnny neden bu
+puanı verdi?" bölümünde "Fundamental veri eksik, nötr varsayım
+kullanıldı" notuyla açıkça belirtilir.
+
+**Not:** "Karne" sekmesinin gerçek DOM yapısı Cloudflare koruması
+yüzünden canlı taranıp doğrulanamadı; metin ayıklama esnek/genel bir
+yöntemle yazıldı ve mock testlerle doğrulandı. Kendi makinenizde canlı
+denedikten sonra günlükteki "Karne'den okunanlar: ..." satırlarını
+kontrol etmeniz ve gerekirse `_karne_metninden_degerleri_ayikla`
+fonksiyonundaki etiket eşleşmelerini gerçek sayfa metnine göre ince
+ayar yapmanız gerekebilir.
 
 **PASİF: Eski Fintables Detay/Teknik göstergeler DOM yöntemi (referans
 için):** `integrations/explore_fintables_detail_dom.py` ile AKBNK
@@ -159,10 +193,10 @@ Dosyanın aşağıdaki kolonları içermesi gerekir:
 | `adx` | Opsiyonel | ADX (trend gücü). |
 | `atr_pct` | Opsiyonel | Günlük ATR'nin fiyata oranı (%). TradingView'den gelen ATR (mutlak) değeri fiyata bölünerek yüzdeye çevirilir. |
 | `volume_ratio` | Evet | Güncel hacim / ortalama hacim oranı |
-| `fk` | Evet | Fiyat/Kazanç oranı |
-| `pddd` | Evet | Piyasa Değeri/Defter Değeri oranı |
-| `roe` | Evet | Özkaynak karlılığı (%) |
-| `net_borc_favok` | Evet | Net Borç/FAVÖK (kaldıraç çarpanı) |
+| `fk` | Opsiyonel | Fiyat/Kazanç oranı. Fintables otomasyonunda hisse detay sayfasındaki "Karne" sekmesinden alınmaya çalışılır; bot koruması çıkarsa ya da sekme okunamazsa nötr varsayımla hesaplanır (bkz. aşağıda). |
+| `pddd` | Opsiyonel | Piyasa Değeri/Defter Değeri oranı. Aynı şekilde Karne'den, opsiyonel. |
+| `roe` | Opsiyonel | Özkaynak karlılığı (%). Aynı şekilde Karne'den, opsiyonel. |
+| `net_borc_favok` | Opsiyonel | Net Borç/FAVÖK (kaldıraç çarpanı). Aynı şekilde Karne'den, opsiyonel. |
 | `haber_puani` | Opsiyonel | Haber/KAP/katalizör puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride KAP entegrasyonuyla otomatikleşecek. |
 | `kurumsal_puani` | Opsiyonel | Kurumsal beklenti puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride analist hedef fiyatlarından otomatikleşecek. |
 | `piyasa_rejimi` | Opsiyonel | Piyasa rejimi puanı (0-10). Fintables bunu sağlamaz; yoksa **varsayılan 5/10**. İleride BIST100/XBANK/XUSIN/hacim/VIX/USD-TRY verilerinden Johnny tarafından otomatik hesaplanacak. |
@@ -185,6 +219,17 @@ başarısız olursa eksik kalabilir. Eksik olduklarında
 nötr/makul varsayımlarla çalışır (asla çökmez) ve "Johnny neden bu
 puanı verdi?" bölümünde hangi göstergelerin eksik olduğu açıkça
 listelenir.
+
+`fk`, `pddd`, `roe`, `net_borc_favok` de v1.0 FINAL REVİZYONU ile
+opsiyonel hale getirildi: Fintables'ın ayrı şirket/temel analiz sayfası
+Cloudflare bot koruması arkasında olduğu için otomasyon bunun yerine
+hisse detay sayfasındaki "Karne" sekmesini dener (bkz. "Fintables
+Kurulumu" -> "Fundamental veri kaynağı"); bot koruması çıkarsa ya da
+sekme okunamazsa bu dört alan eksik kalabilir. Eksik olduklarında
+`scoring/fundamental_engine.py` her bileşen için nötr (2.5/5) bir
+varsayımla çalışır (asla çökmez) ve "Johnny neden bu puanı verdi?"
+bölümünde "Fundamental veri eksik, nötr varsayım kullanıldı" notuyla
+açıkça belirtilir.
 
 Diğer tüm alt skorlar kendi maksimum değerlerinin üzerine çıkarsa
 otomatik olarak sınırlanır (clip edilir); eksik/bozuk veri güvenli
@@ -288,6 +333,7 @@ johnny-terminal/
 │   ├── tradingview_indicators.py # TradingView'in herkese açık uç noktasından RSI/MACD/EMA/ADX/ATR çekme (tradingview-ta kütüphanesi, giriş gerektirmez)
 │   ├── explore_fintables_dom.py  # Tek seferlik DOM keşif aracı - Radar tablosu (terminalden çalıştırılır)
 │   ├── explore_fintables_detail_dom.py  # Tek seferlik DOM keşif aracı - hisse detay/Teknik Analiz sayfası (PASİF akış için referans)
+│   ├── explore_fintables_fundamental_dom.py  # Tek seferlik DOM keşif aracı - şirket/temel analiz sayfası (Cloudflare bot koruması tespiti burada doğrulandı)
 │   └── .sessions/                # Kayıtlı oturum (git'e girmez, .gitignore'da)
 ├── data/
 │   └── sample_data.csv           # Örnek veri (ham göstergeler, standart kolon adlarıyla)
@@ -312,20 +358,34 @@ seçenekleri yedek olarak duruyor. v1.0 FINAL REVİZYONU ile teknik
 gösterge kaynağı Fintables'ın kırılgan legend-DOM okumasından
 TradingView'in herkese açık, giriş gerektirmeyen teknik analiz uç
 noktasına taşındı (bkz. "Fintables Kurulumu" ve
-`integrations/tradingview_indicators.py`). Akış artık: Radar → ilk 20
-aday → TradingView teknik veri → Johnny Score → Top 3.
+`integrations/tradingview_indicators.py`), ve fundamental veriler
+(F/K, PD/DD, ROE, Net Borç/FAVÖK) için Fintables'ın Cloudflare korumalı
+şirket sayfası yerine hisse detay sayfasındaki "Karne" sekmesi
+denenmeye başlandı (bkz. "Fundamental veri kaynağı"). Akış artık: Radar
+→ ilk 20 aday → TradingView teknik veri + Karne fundamental veri →
+Johnny Score → Top 3. Fintables'ın Cloudflare korumalı sayfaları
+**hiçbir şekilde aşılmaya çalışılmaz**; böyle bir koruma tespit
+edilirse o hisse için ilgili alanlar sadece boş bırakılır.
 
-Bilinen sınırlama: Bu ortamdaki ağ kısıtlamaları nedeniyle
-`tradingview-ta` kütüphanesi gerçek TradingView API'sine karşı canlı
-test edilemedi; entegrasyon kod incelemesi + sahte (mock) modüllerle
-uçtan uca test edildi. Kendi makinenizde bir kez canlı deneyip
-günlükteki "TradingView ... teknik veri alındı/alınamadı" satırlarını
-kontrol etmeniz önerilir.
+Bilinen sınırlamalar:
+
+- Bu ortamdaki ağ kısıtlamaları nedeniyle `tradingview-ta` kütüphanesi
+  gerçek TradingView API'sine karşı canlı test edilemedi; entegrasyon
+  kod incelemesi + sahte (mock) modüllerle uçtan uca test edildi.
+  Kendi makinenizde bir kez canlı deneyip günlükteki "TradingView ...
+  teknik veri alındı/alınamadı" satırlarını kontrol etmeniz önerilir.
+- "Karne" sekmesinin gerçek DOM yapısı da aynı nedenle (canlı erişim
+  kısıtlaması) doğrulanamadı; metin ayıklama esnek/genel bir yöntemle
+  yazıldı ve sadece mock testlerle doğrulandı. Kendi makinenizde canlı
+  test edip gerekirse ince ayar yapmanız gerekebilir.
 
 Sıradaki olası adımlar:
 
 - TradingView entegrasyonunun gerçek API ile canlı doğrulanması
   (yukarıdaki sınırlama nedeniyle henüz yapılamadı).
+- "Karne" sekmesinden F/K/PD/DD/ROE/Net Borç/FAVÖK okumanın gerçek
+  Fintables hesabında canlı doğrulanması ve gerekirse etiket
+  eşleşmelerinin (`_karne_metninden_degerleri_ayikla`) ince ayarı.
 - Radar tablosunun ~640 satırının tamamının güvenilir şekilde
   yüklenmesi (şu an best-effort bir kaydırma denemesi var; Fintables'ın
   grid bileşeni tamamen sanallaştırılmışsa yetersiz kalabilir).
