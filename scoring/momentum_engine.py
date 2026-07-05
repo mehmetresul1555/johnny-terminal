@@ -13,6 +13,18 @@ docstring'i). Eksikse bu fonksiyonlar zaten nötr bir varsayılanla
 çalışır (asla çökmez); sadece `fiyat` her zaman gerekli kalır (Radar'dan
 her zaman gelir).
 
+BUG FIX (v1.0 FINAL, canlı testte bulundu): `volume_ratio` da Fintables
+Radar tablosundan HİÇBİR ZAMAN gelmiyor (Radar bu kolonu içermiyor) -
+ama önceden REQUIRED_COLUMNS listesindeydi. Bu, Streamlit arayüzündeki
+Kolon Eşleştirme adımının `volume_ratio`'yu HER ZAMAN "zorunlu"
+işaretlemesine ve kullanıcı bunu eşleştiremediği için akışın
+`st.stop()` ile tamamen DURMASINA yol açıyordu (Radar başarıyla okunmuş
+olsa bile). Artık `volume_ratio` da opsiyonel: eksikse/boşsa
+`_volume_score` zaten nötr bir varsayılan (1.0 = "ortalama hacim",
+8 üzerinden 4 puan = tam ortada) kullanır; sistem asla durmaz, ve
+"Johnny neden bu puanı verdi?" bölümünde eksikliği açıkça belirtilir
+(bkz. scoring/johnny_score.py -> hacim_orani_eksik).
+
 Puan dağılımı (toplam 20):
     - Volume Ratio        : 8 puan  (ortalama hacmin üzerinde => yüksek puan)
     - ATR                 : 6 puan  (günlük trade için ideal volatilite bandı; eksikse %1.5 varsayılır)
@@ -20,8 +32,10 @@ Puan dağılımı (toplam 20):
 """
 
 MAX_SCORE = 20
-# v1.0 FINAL: ema20/atr_pct artık zorunlu değil (bkz. modül docstring'i).
-REQUIRED_COLUMNS = ["fiyat", "volume_ratio"]
+# v1.0 FINAL: ema20/atr_pct/volume_ratio artık zorunlu değil (bkz. modül
+# docstring'i) - Fintables Radar hiçbirini sağlamaz. Sadece `fiyat`
+# gerçekten her zaman gereklidir (Radar'dan her zaman gelir).
+REQUIRED_COLUMNS = ["fiyat"]
 
 
 def _safe_float(value, default=0.0):

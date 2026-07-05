@@ -53,11 +53,17 @@ STANDARD_COLUMNS = [
 #   Bu sayfalar bot koruması (Cloudflare) arkasında olabilir; çıkarsa ya
 #   da veri bulunamazsa bu alanlar None kalır; scoring/
 #   fundamental_engine.py nötr (2.5/5) puanlarla çalışır, sistem çökmez.
+# - volume_ratio (BUG FIX, canlı testte bulundu): Fintables Radar
+#   tablosu bu kolonu HİÇBİR ZAMAN sağlamıyor. Eskiden zorunlu
+#   sayıldığı için Kolon Eşleştirme ekranı kullanıcıyı eşleştirmeye
+#   zorluyor, eşleştirilemeyince akış tamamen DURUYORDU. Artık
+#   opsiyonel: eksikse scoring/momentum_engine.py nötr (1.0 = ortalama
+#   hacim) bir varsayılanla çalışır, sistem çökmez/durmaz.
 OPTIONAL_STANDARD_COLUMNS = [
     "yeni_is_iliskisi", "gerekce_notu",
     "haber_puani", "kurumsal_puani", "piyasa_rejimi",
     "rsi", "macd_signal", "ema20", "ema50", "ema200", "adx", "atr_pct",
-    "fk", "pddd", "roe", "net_borc_favok",
+    "fk", "pddd", "roe", "net_borc_favok", "volume_ratio",
 ]
 
 # Her Johnny kolonu için bilinen Türkçe/İngilizce takma adlar (normalize

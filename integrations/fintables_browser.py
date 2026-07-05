@@ -138,6 +138,11 @@ RADAR_TABLE_SELECTOR_VARSAYILAN = "table.grid"
 RADAR_MAX_SCROLL_DENEME_VARSAYILAN = 150
 RADAR_SABIT_KALMA_ESIGI_VARSAYILAN = 5
 RADAR_SCROLL_BEKLEME_MS_VARSAYILAN = 400
+# Radar'ın hedefi ~640 benzersiz hissenin TAMAMINI okumak. Okuma bu
+# eşiğin altında kalırsa (bkz. _radar_sayfasindan_df_olustur sonu)
+# kullanıcının fark edebilmesi için açıkça "eksik radar okuması" diye
+# loglanır (akış yine de çökmez, best-effort ile devam eder).
+RADAR_BENZERSIZ_MIN_ESIK_VARSAYILAN = 500
 
 # DOĞRULANDI (integrations/explore_fintables_detail_dom.py ile AKBNK
 # üzerinde test edildi): hisse detay/işlem ekranı sayfası, TradingView
@@ -379,10 +384,25 @@ def _radar_scroll_tetikle(page, tablo_selector=None):
     yeterlidir:
 
         1) JS ile tablonun en yakın kaydırılabilir (overflow-y: auto/
-           scroll) ata elementi bulunup `scrollTop = scrollHeight` yapılır
-           (bulunamazsa `window.scrollTo` ile sayfa sonuna kaydırılır)
-        2) sayfa/pencere düzeyinde fare tekerleği kaydırması
-        3) klavyeden "End" tuşu
+           scroll) ata elementi bulunup KADEMELİ (bir "sayfa" kadar,
+           `clientHeight` kadar) ileri kaydırılır (bulunamazsa
+           `window.scrollBy` ile sayfa kademeli ileri kaydırılır)
+        2) sayfa/pencere düzeyinde kademeli fare tekerleği kaydırması
+        3) klavyeden "Page Down" tuşu (kademeli - "End" DEĞİL)
+
+    BUG FIX (canlı testte Radar'ın sadece ~54 hisse okuduğu, ~640
+    hedefinin çok altında kaldığı görüldü): önceki sürüm doğrudan
+    `el.scrollTop = el.scrollHeight` YAPIYORDU - yani HER çağrıda
+    container'ı TEK SEFERDE en alta zıplatıyordu. Sanal kaydırma
+    (virtualization) kullanan bir grid'de bu, sadece "en başta görünen"
+    ve "en sonda görünen" satırları ortaya çıkarır; ARADAKİ yüzlerce
+    satır HİÇBİR ZAMAN render edilmediği (viewport'a girmediği) için
+    okunamaz. Aynı şekilde `page.mouse.wheel(0, 2500)` de tek seferde
+    çok büyük bir sıçrama yapıp ara satırları atlıyor olabilirdi, ve
+    "End" tuşu da doğrudan en sona zıplıyordu. Artık HER ÜÇ yöntem de
+    KADEMELİ (bir viewport/ekran kadar) ilerliyor - böylece virtualization
+    penceresi sırayla TÜM ara satırların üzerinden geçmek zorunda kalıyor
+    ve her biri en az bir turda DOM'da görünüp okunabiliyor.
 
     Her adım kendi try/except'i içinde - biri başarısız olursa (örn.
     mock/test ortamında ilgili metot mevcut değilse, ya da site yapısı
@@ -402,13 +422,17 @@ def _radar_scroll_tetikle(page, tablo_selector=None):
                     const stil = window.getComputedStyle(el);
                     if ((stil.overflowY === 'auto' || stil.overflowY === 'scroll')
                         && el.scrollHeight > el.clientHeight) {
-                        el.scrollTop = el.scrollHeight;
+                        const adim = el.clientHeight > 0 ? el.clientHeight : 600;
+                        el.scrollTop = Math.min(
+                            el.scrollTop + adim,
+                            el.scrollHeight
+                        );
                         return true;
                     }
                     el = el.parentElement;
                 }
             }
-            window.scrollTo(0, document.body.scrollHeight);
+            window.scrollBy(0, window.innerHeight || 700);
             return false;
         }
         """
@@ -417,12 +441,12 @@ def _radar_scroll_tetikle(page, tablo_selector=None):
         pass
 
     try:
-        page.mouse.wheel(0, 2500)
+        page.mouse.wheel(0, 700)
     except Exception:
         pass
 
     try:
-        page.keyboard.press("End")
+        page.keyboard.press("PageDown")
     except Exception:
         pass
 
@@ -906,6 +930,21 @@ def _radar_sayfasindan_df_olustur(
         f"Radar tamamlandı. Toplam: {len(veri_satirlari)} hisse. "
         f"Benzersiz: {len(veri_satirlari)} hisse."
     )
+
+    # BUG FIX: Radar'ın hedefi ~640 hissenin TAMAMINI okumak. Eğer
+    # döngü (sabit kalma eşiği ya da azami deneme sayısı nedeniyle)
+    # beklenenden ÇOK daha az benzersiz hisseyle durduysa, bu sessizce
+    # geçilmemeli - kullanıcının bunu fark edebilmesi için açıkça
+    # "eksik radar okuması" diye loglanır. Akış YİNE DE ÇÖKMEZ (elimizdeki
+    # veriyle best-effort devam edilir), bu sadece bir uyarı logudur.
+    if len(veri_satirlari) < RADAR_BENZERSIZ_MIN_ESIK_VARSAYILAN:
+        _bildir(
+            f"UYARI: eksik radar okuması - toplam {len(veri_satirlari)} "
+            f"benzersiz hisse okundu, beklenen ~640 hissenin "
+            f"({RADAR_BENZERSIZ_MIN_ESIK_VARSAYILAN} eşiğinin) altında "
+            "kaldı. Sayfa yapısı değişmiş veya scroll tetikleme "
+            "yöntemleri bu oturumda etkisiz kalmış olabilir."
+        )
 
     # BUG FIX: `hisse_kolon_index` burada güvenilir şekilde biliniyor
     # (başlıktan ya da değer-tabanlı yedek yöntemle tespit edildi), AMA

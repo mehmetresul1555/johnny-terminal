@@ -159,6 +159,16 @@ def _eksik_teknik_gostergeler(row):
     return eksikler
 
 
+def _hacim_orani_eksik_mi(row):
+    """volume_ratio (hacim oranı) eksik mi (None/NaN/boş)? Fintables
+    Radar tablosu bu alanı hiçbir zaman sağlamıyor - bkz.
+    scoring/momentum_engine.py modül docstring'i. Eksik olması sistemi
+    DURDURMAZ (momentum_engine zaten nötr 1.0 varsayımıyla çalışır),
+    burada sadece "neden bu puan" açıklamasında şeffafça belirtilebilsin
+    diye tespit edilir."""
+    return _deger_eksik_mi(row.get("volume_ratio"))
+
+
 def _eksik_fundamental_alanlar(row):
     """Bir hisse satırında F/K, PD/DD, ROE, Net Borç/FAVÖK'ten
     hangilerinin eksik (None/NaN/boş) olduğunu tespit eder.
@@ -266,6 +276,7 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
 
     eksik_teknik_gostergeler = _eksik_teknik_gostergeler(row)
     eksik_fundamental_alanlar = _eksik_fundamental_alanlar(row)
+    hacim_orani_eksik = _hacim_orani_eksik_mi(row)
 
     clipped = {
         "teknik_skor": teknik_skor,
@@ -303,6 +314,7 @@ def compute_total_score(row, base_damping=DEFAULT_BASE_DAMPING):
         "fired_rules": fired_rules,
         "eksik_teknik_gostergeler": eksik_teknik_gostergeler,
         "eksik_fundamental_alanlar": eksik_fundamental_alanlar,
+        "hacim_orani_eksik": hacim_orani_eksik,
     }
 
 
@@ -405,12 +417,17 @@ def generate_reason_bullets(score_result):
 
     eksik_teknik_gostergeler = score_result.get("eksik_teknik_gostergeler", [])
     eksik_fundamental_alanlar = score_result.get("eksik_fundamental_alanlar", [])
+    hacim_orani_eksik = score_result.get("hacim_orani_eksik", False)
 
     bullets = []
     for key in ["teknik_skor", "momentum_skor", "bilanco_skor", "haber_skor", "kurumsal_skor", "piyasa_rejimi_skor"]:
         etiket = f"{LABELS[key]}: {clipped[key]:.0f}/{SUB_SCORE_MAX[key]} puan"
         if varsayilan_kullanildi.get(key):
             etiket += " (veri yok, nötr varsayılan kullanıldı)"
+        elif key == "momentum_skor" and hacim_orani_eksik and eksik_teknik_gostergeler:
+            etiket += " (Hacim oranı ve bazı göstergeler eksik, nötr varsayım kullanıldı)"
+        elif key == "momentum_skor" and hacim_orani_eksik:
+            etiket += " (Hacim oranı eksik, nötr varsayım kullanıldı)"
         elif key in ("teknik_skor", "momentum_skor") and eksik_teknik_gostergeler:
             etiket += " (bazı göstergeler eksik, kısmen varsayılan kullanıldı)"
         elif key == "bilanco_skor" and eksik_fundamental_alanlar:
@@ -418,6 +435,13 @@ def generate_reason_bullets(score_result):
         else:
             etiket += " (taban analiz)"
         bullets.append(etiket)
+
+    if hacim_orani_eksik:
+        bullets.append(
+            "Hacim oranı eksik, nötr varsayım kullanıldı: volume_ratio "
+            "(Fintables Radar tablosu bu alanı sağlamıyor; ortalama hacme "
+            "eşit (1.0) nötr varsayımla hesaplandı, sistem durmadı)"
+        )
 
     if eksik_teknik_gostergeler:
         bullets.append(
