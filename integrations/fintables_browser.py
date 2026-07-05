@@ -699,9 +699,25 @@ def _radar_sayfasindan_df_olustur(
             # (farklı bir şemaya geçildiyse) birikim sıfırlanıp yeniden
             # başlar.
             if len(bu_tur_hucreler) >= 3:
-                _bu_tur_sayaci = Counter(len(s) for s in bu_tur_hucreler)
+                # BUG FIX (art arda canlı testlerde doğrulanan örüntü):
+                # yanlış kilitlenen kolon sayısı HER SEFERİNDE küçük bir
+                # sayı (1 ya da 2) çıktı, doğrusu HER SEFERİNDE 13 idi.
+                # Bu, Fintables'ın grid'inin DOM'da gerçek (13 hücreli)
+                # satırların YANINDA, virtualization için kullanılan
+                # 1-2 hücreli "spacer/placeholder" satırlar da
+                # bulundurduğuna işaret ediyor - ve bu placeholder'lar
+                # bazen SAYICA gerçek satırlardan FAZLA olabiliyor, bu
+                # yüzden saf çoğunluk oylaması yanlış tarafı seçiyordu.
+                # Artık çok kısa (<=2 hücreli) satırlar, daha uzun
+                # satırlar MEVCUTKEN oylamaya hiç KATILMIYOR - sadece
+                # hiç uzun satır yoksa (gerçekten tüm satırlar kısaysa)
+                # kısa satırlar da oylamaya dahil edilir.
+                _anlamli_hucreler = [s for s in bu_tur_hucreler if len(s) > 2]
+                _oy_havuzu = _anlamli_hucreler if _anlamli_hucreler else bu_tur_hucreler
+
+                _bu_tur_sayaci = Counter(len(s) for s in _oy_havuzu)
                 _bu_tur_kolon_sayisi, _bu_tur_adet = _bu_tur_sayaci.most_common(1)[0]
-                if _bu_tur_adet / len(bu_tur_hucreler) >= 0.6:
+                if _bu_tur_adet / len(_oy_havuzu) >= 0.6:
                     _bu_turun_guvenilir_satirlari = [
                         s for s in bu_tur_hucreler if len(s) == _bu_tur_kolon_sayisi
                     ]
