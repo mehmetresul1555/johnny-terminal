@@ -34,6 +34,7 @@ toplu akış için bir istisna (exception) fırlatılmaz - çağıran taraf
 (run_full_update) diğer hisselerle sorunsuz devam eder.
 """
 
+import re
 import time
 
 import pandas as pd
@@ -41,6 +42,15 @@ import pandas as pd
 DEFAULT_SCREENER = "turkey"
 DEFAULT_EXCHANGE = "BIST"
 DEFAULT_INTERVAL = "1d"
+
+# BUG FIX (savunma amaçlı güçlendirme): Fintables Radar'dan okunan hisse
+# kodu hücreleri teorik olarak görünmez/özel karakterler (sıfır genişlikli
+# boşluk, ikon fontu artıkları, vb.) içerebilir - bunlar normal `.strip()`
+# ile temizlenmez ve TradingView'in sembolü TANIMAMASINA (sessizce "bulunamadı"
+# sonucuna) yol açabilir. Bu yüzden sembol, TradingView'e gönderilmeden
+# önce SADECE A-Z0-9 karakterlerini bırakacak şekilde temizlenir (gerçek
+# BIST kodları zaten her zaman büyük harf + rakamdan oluşur, örn. A1CAP).
+_SEMBOL_TEMIZLEME_DESENI = re.compile(r"[^A-Z0-9]")
 
 # tradingview_ta'nın varsayılan gösterge listesinde ATR yok; ekstra
 # istenmesi gerekiyor (bkz. TA_Handler.add_indicators /
@@ -176,17 +186,25 @@ def _ensure_tradingview_ta():
 
 
 def normalize_bist_symbol(symbol, exchange=DEFAULT_EXCHANGE):
-    """Bir hisse kodunu ('AKBNK', 'akbnk', zaten 'BIST:AKBNK' olabilir)
-    TradingView'in beklediği 'EXCHANGE:SEMBOL' formatına çevirir.
+    """Bir hisse kodunu ('AKBNK', 'akbnk', zaten 'BIST:AKBNK' olabilir,
+    ya da görünmez/özel karakter içeren ' AKBNK\\u200b' gibi kirli bir
+    Fintables hücresi olabilir) TradingView'in beklediği 'EXCHANGE:SEMBOL'
+    formatına çevirir. Borsa ve sembol kısımlarının HER İKİSİ de sadece
+    A-Z0-9 karakterlerine indirgenir (bkz. _SEMBOL_TEMIZLEME_DESENI).
 
     Örnek:
         normalize_bist_symbol("AKBNK") -> "BIST:AKBNK"
         normalize_bist_symbol("bist:akbnk") -> "BIST:AKBNK"
+        normalize_bist_symbol(" AKBNK\\u200b") -> "BIST:AKBNK"
     """
     s = str(symbol).strip().upper()
     if ":" in s:
-        return s
-    return f"{exchange}:{s}"
+        borsa_ham, sembol_ham = s.split(":", 1)
+        borsa_temiz = _SEMBOL_TEMIZLEME_DESENI.sub("", borsa_ham) or exchange
+        sembol_temiz = _SEMBOL_TEMIZLEME_DESENI.sub("", sembol_ham)
+        return f"{borsa_temiz}:{sembol_temiz}"
+    sembol_temiz = _SEMBOL_TEMIZLEME_DESENI.sub("", s)
+    return f"{exchange}:{sembol_temiz}"
 
 
 def _analysis_to_dict(analysis, hisse):
@@ -326,6 +344,7 @@ def fetch_indicators_for_candidates(
         sonuc_map = None
 
     kayitlar = []
+    toplu_denendi = sonuc_map is not None
 
     if sonuc_map is not None:
         for orijinal, tv_sembol in zip(symbols, tv_semboller):
@@ -350,6 +369,36 @@ def fetch_indicators_for_candidates(
             kayitlar.append(kayit)
             if i < toplam:
                 time.sleep(YEDEK_ISTEK_BEKLEME_SN)
+
+    # BUG FIX (kullanıcı önerisi): toplu istek (get_multiple_analysis)
+    # İSTİSNA FIRLATMADAN "teknik olarak başarılı" dönebilir ama yine de
+    # TÜM adaylar için None içerebilir (canlı testte tam olarak bu oldu -
+    # HTTP 200, ama totalCount:0). Önceden bu durumda tek tek (TA_Handler)
+    # yedek moda HİÇ geçilmiyordu (sadece toplu istek İSTİSNA fırlatırsa
+    # geçiliyordu). Artık %0 başarı durumunda - TradingView'in toplu ve
+    # tekil sorgu uç noktaları farklı davranabileceği ihtimaline karşı -
+    # otomatik olarak tek tek de denenir; bu, ekstra bir güvenlik ağıdır.
+    if toplu_denendi and kayitlar and all(k.get("rsi") is None for k in kayitlar):
+        _bildir(
+            "Toplu istek %0 başarı ile sonuçlandı (hata fırlatmadı ama "
+            "hiçbir aday bulunamadı); güvenlik amaçlı tek tek (TA_Handler) "
+            "de deneniyor..."
+        )
+        yeni_kayitlar = []
+        toplam = len(symbols)
+        for i, orijinal in enumerate(symbols, start=1):
+            kayit = fetch_tradingview_indicators(
+                orijinal, screener=screener, exchange=exchange,
+                interval=interval, timeout=timeout,
+            )
+            if kayit.get("rsi") is None and kayit.get("ema20") is None:
+                _bildir(f"TradingView {orijinal} teknik veri alınamadı (tek tek denemede de).")
+            else:
+                _bildir(f"TradingView {orijinal} teknik veri alındı (tek tek denemede başarılı oldu).")
+            yeni_kayitlar.append(kayit)
+            if i < toplam:
+                time.sleep(YEDEK_ISTEK_BEKLEME_SN)
+        kayitlar = yeni_kayitlar
 
     # BUG TEŞHİSİ (canlı testte görüldü: 20/20 aday için "teknik veri
     # alınamadı" - %0 başarı). Tek tek her hissenin TradingView'de
