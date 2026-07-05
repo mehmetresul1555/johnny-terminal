@@ -63,8 +63,33 @@ DEĞİL, doğrudan TradingView'in kendi herkese açık teknik analiz veri
 uç noktasından alınıyor (bkz. integrations/tradingview_indicators.py,
 `tradingview-ta` kütüphanesi). Bu yöntem giriş/hesap gerektirmez,
 tarayıcı otomasyonu içermez - basit bir HTTP isteğidir. Fintables
-tarayıcı otomasyonu SADECE Radar ana tablosunu okumak için kullanılmaya
-devam ediyor.
+tarayıcı otomasyonu Radar ana tablosunu okumak İÇİN ve aşağıda
+açıklanan fundamental veri sayfaları İÇİN kullanılmaya devam ediyor.
+
+DURUM (Fundamental veri: F/K, PD/DD, ROE, Net Borç/FAVÖK) - DÜZELTİLDİ:
+İlk denemede bu verilerin hisse detay sayfasındaki "Karne" sekmesinde
+olduğu varsayılmıştı. Claude in Chrome üzerinden GERÇEK bir tarayıcı
+oturumuyla canlı bakıldığında bunun YANLIŞ olduğu görüldü - "Karne"
+sekmesi bunun yerine "Karlılık/Büyüme/Borçluluk" başlıklı, bps değişimi
+ve evet/hayır kontrolleri içeren AYRI bir kalite skor kartı gösteriyor.
+
+DOĞRU sayfalar (aynı canlı oturumda tespit edildi, düz HTML tablo,
+canvas DEĞİL):
+    - F/K, PD/DD  -> https://fintables.com/sirketler/{TICKER}/oran-analizi/piyasa-carpanlari
+                     ("Güncel" satırında F/K, PD/DD, FD/FAVÖK sırasıyla)
+    - ROE         -> https://fintables.com/sirketler/{TICKER}/oran-analizi/rasyo-analiz-tablosu
+                     ("Özkaynak Karlılığı" satırı, en güncel çeyrek)
+    - Net Borç/FAVÖK bu iki sayfada da AYRI bir kalem olarak bulunamadı;
+      esnek metin taramasıyla yakalanmaya çalışılır, yoksa None kalır.
+
+Bu sayfalar da (Piyasa Çarpanları/Rasyo Analiz Tablosu gibi "/sirketler/"
+altındaki diğer sayfalar) Cloudflare bot koruması arkasında olabilir -
+`fetch_fundamental_for_symbol` her sayfa açılışında önce bunu kontrol
+eder; çıkarsa o sayfanın verisi için HEMEN VAZGEÇİLİR (aşma girişimi
+YOK), hisse ATLANMAZ, sadece ilgili alanlar None kalır. Eski Karne
+tabanlı kod (`_karne_fetch_fundamental_for_symbol_PASIF`,
+`_karne_sekmesini_ac_ve_oku`, `_karne_metninden_degerleri_ayikla`)
+referans için modülde duruyor ama artık ÇAĞRILMIYOR.
 """
 
 import re
@@ -96,28 +121,50 @@ DETAY_URL_TEMPLATE_VARSAYILAN = "https://fintables.com/islem-ekrani?code={ticker
 # üzerindedir ve okunamaz, ama bu legend metin kutuları gerçek DOM'dur.
 LEGEND_ITEM_SECICI_VARSAYILAN = "[data-name='legend-source-item']"
 
-# v1.0 FINAL REVİZYONU - FUNDAMENTAL VERİ (Karne sekmesi):
+# v1.0 FINAL REVİZYONU - FUNDAMENTAL VERİ:
 # DOĞRULANDI (integrations/explore_fintables_fundamental_dom.py ile):
 # Fintables'ın şirket/temel analiz sayfası (fintables.com/sirketler/
 # {TICKER}) Cloudflare bot koruması arkasında - headless otomasyonla
 # açıldığında "Just a moment... / Performing security verification"
 # (Cloudflare Managed Challenge) gösteriyor. PROJE KURALI GEREĞİ bu
 # korumayı aşmaya ÇALIŞMIYORUZ (CAPTCHA/bot-koruması aşma girişimi
-# yasak). Bunun yerine, zaten erişilebilir olduğu bilinen hisse detay
-# sayfasındaki (DETAY_URL_TEMPLATE_VARSAYILAN) "Karne" sekmesi denenir.
-# Karne sekmesi bulunamaz/açılamaz ya da orada da bot koruması çıkarsa,
-# fetch_fundamental_for_symbol TÜM alanları None döner - hata fırlatmaz.
+# yasak). Her sayfa açılışında önce bu koruma kontrol edilir; çıkarsa o
+# hissenin/sayfanın verisi None kalır - hata fırlatılmaz, akış durmaz.
 BOT_KORUMASI_ANAHTAR_KELIMELERI = [
     "just a moment", "checking your browser", "cloudflare",
     "security verification", "captcha", "attention required",
     "enable javascript and cookies",
 ]
 
+# DOĞRULANDI (canlı tarayıcı ile, Claude in Chrome üzerinden): F/K ve
+# PD/DD, hisse detay sayfasındaki "Karne" sekmesinde DEĞİL, ayrı bir
+# "Piyasa Çarpanları" sayfasında; ROE ise "Rasyo Analiz Tablosu"
+# sayfasında düz HTML tablo olarak (canvas değil) gösteriliyor. Net
+# Borç/FAVÖK bu iki sayfada da AYRI bir kalem olarak bulunamadı - varsa
+# esnek metin taramasıyla yakalanmaya çalışılır, yoksa None kalır.
+PIYASA_CARPANLARI_URL_TEMPLATE = "https://fintables.com/sirketler/{ticker}/oran-analizi/piyasa-carpanlari"
+RASYO_ANALIZ_TABLOSU_URL_TEMPLATE = "https://fintables.com/sirketler/{ticker}/oran-analizi/rasyo-analiz-tablosu"
+
+# Bu sayfalarda aranacak etiketler (olası varyasyonlar). "Güncel" satırı
+# Piyasa Çarpanları tablosunda F/K, PD/DD, FD/FAVÖK sırasıyla 3 değer
+# içerir (bkz. _piyasa_carpanlari_degerlerini_ayikla).
+GUNCEL_SATIR_ETIKETI = ["Güncel"]
+ROE_ETIKETLERI = ["Özkaynak Karlılığı", "ROE"]
+NET_BORC_FAVOK_ETIKETLERI = ["Net Borç/FAVÖK", "Net Borç / FAVÖK", "Net Debt/EBITDA"]
+
+_FUNDAMENTAL_KOLON_GORUNEN_ADI = {
+    "fk": "F/K", "pddd": "PD/DD", "roe": "ROE", "net_borc_favok": "Net Borç/FAVÖK",
+}
+
+# --- PASİF (referans için tutuluyor, artık ÇAĞRILMIYOR) ---
+# İlk denemede "Karne" sekmesinin F/K/PD/DD/ROE/Net Borç/FAVÖK
+# içerdiği varsayılmıştı; canlı tarayıcı ile bakıldığında bunun YANLIŞ
+# olduğu görüldü - "Karne" sekmesi bunun yerine "Karlılık/Büyüme/
+# Borçluluk" başlıklı, bps değişimi ve evet/hayır kontrolleri içeren
+# AYRI bir kalite skor kartı gösteriyor. Bu yüzden Karne tabanlı kod
+# aşağıda referans için duruyor ama artık kullanılmıyor.
 KARNE_SEKME_METNI_VARSAYILAN = "Karne"
 
-# Karne sekmesinde aranacak etiketler (olası varyasyonlar) -> Johnny'nin
-# standart fundamental kolonlarına eşleme. Sayfa yapısı henüz canlı
-# doğrulanmadığı için ESNEK (metin bazlı) bir arama kullanılır.
 KARNE_ETIKET_ESLESTIRME = {
     "fk": ["F/K", "Fiyat/Kazanç"],
     "pddd": ["PD/DD", "Piyasa Değeri/Defter Değeri"],
@@ -848,15 +895,13 @@ def _bot_korumasi_var_mi(page):
 
 
 def _karne_sekmesini_ac_ve_oku(page, sekme_metni=None, timeout_ms=8_000):
-    """Hisse detay sayfasında 'Karne' sekmesini bulup TIKLAMAYI dener,
-    sonra sayfanın görünür metnini okur. Sekme bulunamaz/tıklanamazsa ya
-    da metin okunamazsa None döner (hata fırlatmaz).
+    """PASİF (artık ÇAĞRILMIYOR) - bkz. modül üstündeki not: "Karne"
+    sekmesinin F/K/PD/DD/ROE/Net Borç/FAVÖK İÇERMEDİĞİ canlı tarayıcıyla
+    doğrulandı. Bu fonksiyon sadece referans için duruyor.
 
-    NOT: Bu, doğrulanmamış bir sekme adı/konumuyla çalışır (Cloudflare
-    koruması nedeniyle canlı DOM taraması yapılamadı). Bu yüzden sadece
-    TEK, basit bir metin bazlı tıklama denenir; başarısız olursa hemen
-    vazgeçilir - tekrar tekrar deneme ya da alternatif seçiciler aramak
-    gibi agresif bir davranış YOKTUR."""
+    Hisse detay sayfasında 'Karne' sekmesini bulup TIKLAMAYI dener,
+    sonra sayfanın görünür metnini okur. Sekme bulunamaz/tıklanamazsa ya
+    da metin okunamazsa None döner (hata fırlatmaz)."""
     sekme_metni = sekme_metni or KARNE_SEKME_METNI_VARSAYILAN
     try:
         sekme = page.get_by_text(sekme_metni, exact=False).first
@@ -872,8 +917,9 @@ def _karne_sekmesini_ac_ve_oku(page, sekme_metni=None, timeout_ms=8_000):
 
 
 def _karne_metninden_degerleri_ayikla(tam_metin):
-    """Karne sekmesinin (ya da genel sayfanın) düz metninden F/K, PD/DD,
-    ROE, Net Borç/FAVÖK değerlerini çıkarmayı dener.
+    """PASİF (artık ÇAĞRILMIYOR) - bkz. modül üstündeki not. Karne
+    sekmesinin (ya da genel sayfanın) düz metninden F/K, PD/DD, ROE,
+    Net Borç/FAVÖK değerlerini çıkarmayı dener.
 
     Sayfa yapısı canlı doğrulanmadığı için ESNEK bir yöntem kullanılır:
     her etiket için aynı satırda ya da sonraki 1-2 satırda ilk sayısal
@@ -915,29 +961,14 @@ def _karne_metninden_degerleri_ayikla(tam_metin):
     return sonuc
 
 
-def fetch_fundamental_for_symbol(page, ticker, config=None, on_progress=None):
-    """Tek bir hisse için fundamental verileri (F/K, PD/DD, ROE, Net
-    Borç/FAVÖK) Fintables'ın hisse detay sayfasındaki "Karne" sekmesinden
-    okumayı dener.
-
-    Adımlar: detay sayfasını aç -> bot koruması var mı kontrol et (varsa
-    HEMEN DUR, aşmaya ÇALIŞMA) -> "Karne" sekmesini bulup tıklamayı dene
-    -> metinden F/K/PD/DD/ROE/Net Borç/FAVÖK'ü ayıklamayı dene.
-
-    Herhangi bir adım başarısız olursa (bot koruması, sekme bulunamadı,
-    değerler ayıklanamadı) TÜM alanlar None döner - hata fırlatmaz,
-    hisse ATLANMAZ (sadece bu alanlar boş kalır; scoring/
-    fundamental_engine.py nötr puanlarla devam eder).
-
-    Args:
-        page: paylaşılan Playwright page (zaten oturum yüklü context'e ait)
-        ticker: hisse kodu
-        config: watchlist.yaml içeriği
-        on_progress: opsiyonel callable(str)
-
-    Returns:
-        dict: {"hisse": ticker, "fk": ..., "pddd": ..., "roe": ...,
-        "net_borc_favok": ...}
+def _karne_fetch_fundamental_for_symbol_PASIF(page, ticker, config=None, on_progress=None):
+    """PASİF (artık ÇAĞRILMIYOR) - bkz. modül üstündeki not: canlı
+    tarayıcıyla bakıldığında "Karne" sekmesinin F/K/PD/DD/ROE/Net
+    Borç/FAVÖK İÇERMEDİĞİ görüldü (bunun yerine ayrı bir kalite skor
+    kartı gösteriyor). Yerine geçen güncel fonksiyon: aşağıdaki
+    `fetch_fundamental_for_symbol` (Piyasa Çarpanları + Rasyo Analiz
+    Tablosu sayfalarını kullanır). Bu fonksiyon sadece referans için
+    duruyor, silinmedi.
     """
     def _bildir(mesaj):
         print(f"[fintables_browser] {mesaj}")
@@ -977,12 +1008,154 @@ def fetch_fundamental_for_symbol(page, ticker, config=None, on_progress=None):
 
     degerler = _karne_metninden_degerleri_ayikla(tam_metin)
     sonuc.update(degerler)
+    return sonuc
 
-    bulunanlar = [_KARNE_KOLON_GORUNEN_ADI[k] for k, v in degerler.items() if v is not None]
-    if bulunanlar:
-        _bildir(f"{ticker}: Karne'den okunanlar: {', '.join(bulunanlar)}.")
+
+def _etiket_sonrasi_ilk_degerler(satirlar, etiketler, kac_deger=1):
+    """`satirlar` içinde `etiketler`'den biriyle eşleşen İLK satırı bulur,
+    o satırdan SONRAKİ satırlar arasında sırayla ilk `kac_deger` adet
+    parse edilebilir (Türkçe formatlı, '%' içerebilir) sayıyı döner.
+
+    Bulunamazsa `[None] * kac_deger` döner - hata fırlatmaz. Bu, sayfa
+    yapısı canlı bir DOM taramasıyla (CSS seçici bazlı) değil, görünür
+    metne bakılarak doğrulandığı için ESNEK/metin tabanlı bir yaklaşımdır.
+    """
+    for etiket in etiketler:
+        etiket_kucuk = etiket.lower()
+        for i, satir in enumerate(satirlar):
+            if etiket_kucuk not in satir.lower():
+                continue
+            degerler = []
+            j = i + 1
+            while len(degerler) < kac_deger and j < len(satirlar) and j < i + 20:
+                deger = _tr_sayi(satirlar[j].replace("%", "").strip())
+                if deger is not None:
+                    degerler.append(deger)
+                j += 1
+            if len(degerler) == kac_deger:
+                return degerler
+    return [None] * kac_deger
+
+
+def _piyasa_carpanlari_degerlerini_ayikla(tam_metin):
+    """"Piyasa Çarpanları" sayfasının düz metninden F/K ve PD/DD'yi
+    çıkarır. DOĞRULANDI (canlı tarayıcı ile): sayfada "Güncel" satırından
+    sonra sırasıyla F/K, PD/DD, FD/FAVÖK değerleri geliyor (düz HTML
+    tablo, canvas değil). FD/FAVÖK Johnny'nin standart kolonlarından biri
+    olmadığı için okunur ama kullanılmaz.
+
+    Returns:
+        dict: {"fk": float|None, "pddd": float|None}
+    """
+    if not tam_metin:
+        return {"fk": None, "pddd": None}
+    satirlar = [s.strip() for s in tam_metin.split("\n") if s.strip()]
+    fk, pddd, _fd_favok = _etiket_sonrasi_ilk_degerler(satirlar, GUNCEL_SATIR_ETIKETI, kac_deger=3)
+    return {"fk": fk, "pddd": pddd}
+
+
+def _rasyo_tablosu_degerlerini_ayikla(tam_metin):
+    """"Rasyo Analiz Tablosu" sayfasının düz metninden ROE'yi (Özkaynak
+    Karlılığı) çıkarır; varsa Net Borç/FAVÖK'ü de esnek bir aramayla
+    yakalamayı dener (bu sayfada AYRI bir kalem olarak bulunamadı, bu
+    yüzden büyük olasılıkla None kalacaktır - bu beklenen bir durumdur).
+
+    Returns:
+        dict: {"roe": float|None, "net_borc_favok": float|None}
+    """
+    if not tam_metin:
+        return {"roe": None, "net_borc_favok": None}
+    satirlar = [s.strip() for s in tam_metin.split("\n") if s.strip()]
+    roe = _etiket_sonrasi_ilk_degerler(satirlar, ROE_ETIKETLERI, kac_deger=1)[0]
+    net_borc_favok = _etiket_sonrasi_ilk_degerler(satirlar, NET_BORC_FAVOK_ETIKETLERI, kac_deger=1)[0]
+    return {"roe": roe, "net_borc_favok": net_borc_favok}
+
+
+def fetch_fundamental_for_symbol(page, ticker, config=None, on_progress=None):
+    """Tek bir hisse için fundamental verileri (F/K, PD/DD, ROE, varsa
+    Net Borç/FAVÖK) Fintables'ın DOĞRU sayfalarından okumayı dener:
+
+        - F/K, PD/DD  -> .../oran-analizi/piyasa-carpanlari
+        - ROE         -> .../oran-analizi/rasyo-analiz-tablosu
+
+    (Bkz. modül üstündeki not: "Karne" sekmesi bu verileri İÇERMEZ, bu
+    yüzden artık kullanılmıyor.)
+
+    Her sayfa açılışında önce bot koruması (Cloudflare vb.) kontrol
+    edilir; çıkarsa o sayfanın verisi için HEMEN VAZGEÇİLİR (aşma
+    girişimi YOK), diğer sayfa/hisselerle devam edilir. Herhangi bir
+    adım başarısız olursa ilgili alanlar None kalır - hata fırlatmaz,
+    hisse ATLANMAZ (scoring/fundamental_engine.py nötr puanlarla devam
+    eder).
+
+    Args:
+        page: paylaşılan Playwright page (zaten oturum yüklü context'e ait)
+        ticker: hisse kodu
+        config: watchlist.yaml içeriği
+        on_progress: opsiyonel callable(str)
+
+    Returns:
+        dict: {"hisse": ticker, "fk": ..., "pddd": ..., "roe": ...,
+        "net_borc_favok": ...}
+    """
+    def _bildir(mesaj):
+        print(f"[fintables_browser] {mesaj}")
+        if on_progress:
+            try:
+                on_progress(mesaj)
+            except Exception:
+                pass
+
+    sonuc = {"hisse": ticker, "fk": None, "pddd": None, "roe": None, "net_borc_favok": None}
+
+    fintables_cfg = (config or {}).get("fintables", {})
+    detay_cfg = fintables_cfg.get("detay", {}) or {}
+    timeout_ms = detay_cfg.get("timeout_ms", 30_000)
+
+    # 1) Piyasa Çarpanları (F/K, PD/DD)
+    try:
+        page.goto(PIYASA_CARPANLARI_URL_TEMPLATE.format(ticker=ticker), timeout=timeout_ms)
+    except Exception as e:
+        _bildir(f"{ticker}: Piyasa Çarpanları sayfası açılamadı ({e}).")
     else:
-        _bildir(f"{ticker}: Karne sekmesi açıldı ama F/K, PD/DD, ROE, Net Borç/FAVÖK ayıklanamadı.")
+        if _bot_korumasi_var_mi(page):
+            _bildir(f"{ticker}: Piyasa Çarpanları sayfasında bot koruması tespit edildi, atlanıyor.")
+        else:
+            try:
+                metin = page.inner_text("body")
+                sonuc.update(_piyasa_carpanlari_degerlerini_ayikla(metin))
+            except Exception as e:
+                _bildir(f"{ticker}: Piyasa Çarpanları verisi okunamadı ({e}).")
+
+    try:
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+    # 2) Rasyo Analiz Tablosu (ROE, varsa Net Borç/FAVÖK)
+    try:
+        page.goto(RASYO_ANALIZ_TABLOSU_URL_TEMPLATE.format(ticker=ticker), timeout=timeout_ms)
+    except Exception as e:
+        _bildir(f"{ticker}: Rasyo Analiz Tablosu sayfası açılamadı ({e}).")
+    else:
+        if _bot_korumasi_var_mi(page):
+            _bildir(f"{ticker}: Rasyo Analiz Tablosu sayfasında bot koruması tespit edildi, atlanıyor.")
+        else:
+            try:
+                metin = page.inner_text("body")
+                sonuc.update(_rasyo_tablosu_degerlerini_ayikla(metin))
+            except Exception as e:
+                _bildir(f"{ticker}: Rasyo Analiz Tablosu verisi okunamadı ({e}).")
+
+    bulunanlar = [
+        _FUNDAMENTAL_KOLON_GORUNEN_ADI[k]
+        for k in ("fk", "pddd", "roe", "net_borc_favok")
+        if sonuc.get(k) is not None
+    ]
+    if bulunanlar:
+        _bildir(f"{ticker}: temel veriler okundu: {', '.join(bulunanlar)}.")
+    else:
+        _bildir(f"{ticker}: temel veriler (F/K, PD/DD, ROE, Net Borç/FAVÖK) okunamadı.")
 
     return sonuc
 
@@ -1157,22 +1330,25 @@ def run_full_update(config, on_progress=None):
         3. İlk N aday seçildi ("640 hisse detayına girme" kuralı burada
            uygulanır)
         4. Her aday için: TradingView {SEMBOL} teknik veri alındı/alınamadı
-        5. Her aday için: Fintables "Karne" sekmesinden F/K/PD/DD/ROE/Net
-           Borç/FAVÖK okunmaya çalışılır (bkz. fetch_fundamental_for_symbol).
-           Fintables'ın ayrı şirket/temel analiz sayfası (fintables.com/
-           sirketler/{TICKER}) Cloudflare bot koruması arkasında olduğu
-           için KULLANILMAZ; bu koruma aşılmaya ÇALIŞILMAZ, sadece
-           tespit edilirse o hisse için bu alanlar None bırakılır.
+        5. Her aday için: F/K, PD/DD Fintables'ın "Piyasa Çarpanları"
+           sayfasından, ROE (varsa Net Borç/FAVÖK) "Rasyo Analiz
+           Tablosu" sayfasından okunmaya çalışılır (bkz.
+           fetch_fundamental_for_symbol). Bu sayfalar Cloudflare bot
+           koruması arkasında olabilir; bu koruma tespit edilirse
+           aşılmaya ÇALIŞILMAZ, sadece o sayfanın/hissenin ilgili
+           alanları None bırakılır.
         6. Teknik + fundamental veriler birleştirildi (Radar satırı +
-           TradingView göstergeleri + Karne verisi tek bir kayıtta)
+           TradingView göstergeleri + Piyasa Çarpanları/Rasyo Analiz
+           Tablosu verisi tek bir kayıtta)
 
-    Bir hisse için TradingView'den ya da Karne'den veri alınamazsa (ağ
-    hatası, sembol bulunamadı, sekme yok, bot koruması vb.) o hisse
-    ATLANMAZ - sadece ilgili alanlar None kalır ve loglanır; scoring
-    katmanı bunu nötr varsayımlarla ele alır (bkz. scoring/johnny_score.py,
-    scoring/fundamental_engine.py). `hata_listesi` bu akışta sadece
-    yapısal bir sorun olursa (örn. hisse kodu kolonu hiç bulunamazsa)
-    doldurulur - normal koşullarda genelde boştur.
+    Bir hisse için TradingView'den ya da Fintables oran analizi
+    sayfalarından veri alınamazsa (ağ hatası, sembol bulunamadı, bot
+    koruması vb.) o hisse ATLANMAZ - sadece ilgili alanlar None kalır ve
+    loglanır; scoring katmanı bunu nötr varsayımlarla ele alır (bkz.
+    scoring/johnny_score.py, scoring/fundamental_engine.py).
+    `hata_listesi` bu akışta sadece yapısal bir sorun olursa (örn. hisse
+    kodu kolonu hiç bulunamazsa) doldurulur - normal koşullarda genelde
+    boştur.
 
     Args:
         config: watchlist.yaml içeriği (dict)
@@ -1282,21 +1458,18 @@ def run_full_update(config, on_progress=None):
     except tradingview_indicators.TradingViewIndicatorError as e:
         raise FintablesError(str(e)) from e
 
-    # 5) Fundamental veri (Karne sekmesi) - AYRI bir tarayıcı oturumu
-    # gerekir (Radar için açılan oturum adım 1'de zaten kapatıldı).
-    # Fintables'ın ayrı şirket/temel analiz sayfası (fintables.com/
-    # sirketler/{TICKER}) Cloudflare bot koruması arkasında olduğu için
-    # KULLANILMAZ (bkz. modül docstring'i); bu koruma aşılmaya
-    # ÇALIŞILMAZ. Bunun yerine zaten erişilebilir olan hisse detay
-    # sayfasındaki "Karne" sekmesi denenir. Herhangi bir adayda bot
-    # koruması/hata çıkarsa o adayın fundamental alanları None kalır,
-    # akış DURMAZ, diğer adaylarla devam eder.
+    # 5) Fundamental veri (Piyasa Çarpanları + Rasyo Analiz Tablosu) -
+    # AYRI bir tarayıcı oturumu gerekir (Radar için açılan oturum adım
+    # 1'de zaten kapatıldı). Bu sayfalar Cloudflare bot koruması
+    # arkasında olabilir (bkz. modül docstring'i); çıkarsa aşılmaya
+    # ÇALIŞILMAZ, o hissenin/sayfanın alanları None kalır, akış DURMAZ,
+    # diğer adaylarla devam eder.
     import random
 
     bekleme_min = detay_cfg.get("bekleme_min_sn", 2.0)
     bekleme_max = detay_cfg.get("bekleme_max_sn", 4.0)
 
-    karne_kayitlari = []
+    fundamental_kayitlari = []
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
@@ -1307,7 +1480,7 @@ def run_full_update(config, on_progress=None):
                 kayit = fetch_fundamental_for_symbol(
                     page, ticker, config, on_progress=on_progress
                 )
-                karne_kayitlari.append(kayit)
+                fundamental_kayitlari.append(kayit)
                 if i < len(aday_kodlari) - 1:
                     bekleme_ms = int(random.uniform(bekleme_min, bekleme_max) * 1000)
                     page.wait_for_timeout(bekleme_ms)
@@ -1315,27 +1488,28 @@ def run_full_update(config, on_progress=None):
             browser.close()
     except Exception as e:
         _bildir(
-            f"Karne (fundamental) verisi alınırken beklenmeyen bir hata "
-            f"oluştu ({e}); tüm adaylar için bu alanlar boş bırakılıyor, "
+            f"Fundamental veri alınırken beklenmeyen bir hata oluştu "
+            f"({e}); tüm adaylar için bu alanlar boş bırakılıyor, "
             "akışa devam ediliyor."
         )
-        karne_kayitlari = [
+        fundamental_kayitlari = [
             {"hisse": t, "fk": None, "pddd": None, "roe": None, "net_borc_favok": None}
             for t in aday_kodlari
         ]
 
-    karne_df = pd.DataFrame(karne_kayitlari)
+    fundamental_df = pd.DataFrame(fundamental_kayitlari)
 
-    # 6) Radar + TradingView + Karne verilerini birleştir. Eşleştirme
-    # hisse kodunun normalize edilmiş (boşluksuz, büyük harf) haliyle
-    # yapılır - Radar'daki kolon adı ne olursa olsun (örn. "640 Hisse").
+    # 6) Radar + TradingView + fundamental verilerini birleştir.
+    # Eşleştirme hisse kodunun normalize edilmiş (boşluksuz, büyük harf)
+    # haliyle yapılır - Radar'daki kolon adı ne olursa olsun (örn. "640
+    # Hisse").
     adaylar = adaylar.copy()
     adaylar["_anahtar"] = adaylar[hisse_kolonu].astype(str).str.strip().str.upper()
     tv_df["_anahtar"] = tv_df["hisse"].astype(str).str.strip().str.upper()
-    karne_df["_anahtar"] = karne_df["hisse"].astype(str).str.strip().str.upper()
+    fundamental_df["_anahtar"] = fundamental_df["hisse"].astype(str).str.strip().str.upper()
 
     df_ham = adaylar.merge(tv_df.drop(columns=["hisse"]), on="_anahtar", how="left")
-    df_ham = df_ham.merge(karne_df.drop(columns=["hisse"]), on="_anahtar", how="left")
+    df_ham = df_ham.merge(fundamental_df.drop(columns=["hisse"]), on="_anahtar", how="left")
     df_ham = df_ham.drop(columns=["_anahtar"])
     df_ham["hisse"] = df_ham[hisse_kolonu]
 

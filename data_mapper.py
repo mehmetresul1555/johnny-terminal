@@ -46,14 +46,13 @@ STANDARD_COLUMNS = [
 #   eksik kalabilir. Eksik olduklarında scoring motorları nötr/varsayılan
 #   değerlerle çalışır, sistem çökmez; "Johnny neden bu puanı verdi?"
 #   bölümünde açıkça belirtilir.
-# - fk/pddd/roe/net_borc_favok (v1.0 FINAL REVİZYONU): Fintables'ın
-#   şirket/temel analiz sayfası (fintables.com/sirketler/{TICKER}) bot
-#   koruması (Cloudflare) arkasında olduğu için otomatik okunamıyor;
-#   bunun yerine hisse detay sayfasındaki "Karne" sekmesi denenir
+# - fk/pddd/roe/net_borc_favok (v1.0 FINAL REVİZYONU): F/K ve PD/DD
+#   Fintables'ın "Piyasa Çarpanları" sayfasından, ROE (varsa Net Borç/
+#   FAVÖK) "Rasyo Analiz Tablosu" sayfasından okunmaya çalışılır
 #   (integrations/fintables_browser.py -> fetch_fundamental_for_symbol).
-#   Karne sekmesi bulunamaz/okunamazsa (ya da bot koruması çıkarsa) bu
-#   alanlar None kalır; scoring/fundamental_engine.py nötr (2.5/5)
-#   puanlarla çalışır, sistem çökmez.
+#   Bu sayfalar bot koruması (Cloudflare) arkasında olabilir; çıkarsa ya
+#   da veri bulunamazsa bu alanlar None kalır; scoring/
+#   fundamental_engine.py nötr (2.5/5) puanlarla çalışır, sistem çökmez.
 OPTIONAL_STANDARD_COLUMNS = [
     "yeni_is_iliskisi", "gerekce_notu",
     "haber_puani", "kurumsal_puani", "piyasa_rejimi",

@@ -4,19 +4,19 @@ Fundamental Engine
 Johnny Score'un "Bilanço/Temel" alt skorunu (maksimum 20 puan) ham bilanço
 verilerinden hesaplar.
 
-Girdi kolonları (CSV'den ya da Fintables "Karne" sekmesinden gelir):
-    fk, pddd, roe, net_borc_favok
+Girdi kolonları (CSV'den ya da Fintables'ın oran analizi sayfalarından
+gelir): fk, pddd, roe, net_borc_favok
 
-v1.0 FINAL REVİZYONU: Bu dört kolon artık OPSİYONELDİR. Fintables'ın
-şirket/temel analiz sayfası (fintables.com/sirketler/{TICKER}) bot
-koruması (Cloudflare) arkasında olduğu için otomatik okunamıyor; bunun
-yerine hisse detay sayfasındaki "Karne" sekmesi denenir
+v1.0 FINAL REVİZYONU: Bu dört kolon artık OPSİYONELDİR. F/K ve PD/DD
+Fintables'ın "Piyasa Çarpanları" sayfasından, ROE (varsa Net Borç/
+FAVÖK) "Rasyo Analiz Tablosu" sayfasından okunmaya çalışılır
 (integrations/fintables_browser.py -> fetch_fundamental_for_symbol).
-Karne sekmesi bulunamaz/okunamazsa (ya da bot koruması çıkarsa) bu
-alanlar None kalır - sistem ÇÖKMEZ, her alan için NÖTR (yarı puan)
-bir varsayım kullanılır ve "Johnny neden bu puanı verdi?" bölümünde
-"Fundamental veri eksik, nötr varsayım kullanıldı" notuyla açıkça
-belirtilir (bkz. scoring/johnny_score.py -> _eksik_fundamental_alanlar).
+Bu sayfalar bot koruması (Cloudflare) arkasında olabilir; çıkarsa ya da
+veri bulunamazsa bu alanlar None kalır - sistem ÇÖKMEZ, her alan için
+NÖTR (yarı puan) bir varsayım kullanılır ve "Johnny neden bu puanı
+verdi?" bölümünde "Fundamental veri eksik, nötr varsayım kullanıldı"
+notuyla açıkça belirtilir (bkz. scoring/johnny_score.py ->
+_eksik_fundamental_alanlar).
 
 Puan dağılımı (toplam 20, her biri eksikse 2.5/5 nötr):
     - F/K            : 5 puan  (düşük F/K => yüksek puan)

@@ -113,11 +113,11 @@ TEKNIK_GOSTERGE_ETIKETLERI = {
     "atr_pct": "ATR",
 }
 
-# v1.0 FINAL REVİZYONU: Fintables'ın şirket/temel analiz sayfası
-# (fintables.com/sirketler/{TICKER}) bot koruması (Cloudflare) arkasında
-# olduğu için otomatik okunamıyor. Bunun yerine hisse detay sayfasındaki
-# "Karne" sekmesi denenir (integrations/fintables_browser.py ->
-# fetch_fundamental_for_symbol); bulunamaz/okunamazsa bu alanlar None
+# v1.0 FINAL REVİZYONU: F/K, PD/DD Fintables'ın "Piyasa Çarpanları"
+# sayfasından, ROE (varsa Net Borç/FAVÖK) "Rasyo Analiz Tablosu"
+# sayfasından okunmaya çalışılır (integrations/fintables_browser.py ->
+# fetch_fundamental_for_symbol). Bu sayfalar bot koruması (Cloudflare)
+# arkasında olabilir; çıkarsa ya da veri bulunamazsa bu alanlar None
 # kalır. fundamental_engine bu durumda zaten nötr (2.5/5) puanlarla
 # çalışır (asla çökmez); burada sadece HANGİ alanların eksik olduğu
 # tespit edilip kullanıcıya "neden bu puan" açıklamasında gösterilir.
@@ -429,8 +429,9 @@ def generate_reason_bullets(score_result):
     if eksik_fundamental_alanlar:
         bullets.append(
             "Fundamental veri eksik, nötr varsayım kullanıldı: "
-            f"{', '.join(eksik_fundamental_alanlar)} (Fintables Karne "
-            "sekmesinden okunamadı ya da bot koruması nedeniyle atlandı)"
+            f"{', '.join(eksik_fundamental_alanlar)} (Fintables Piyasa "
+            "Çarpanları/Rasyo Analiz Tablosu sayfalarından okunamadı ya "
+            "da bot koruması nedeniyle atlandı)"
         )
 
     bullets.append(f"Taban puan (damping uygulanmış): {base_score:.1f} puan")
