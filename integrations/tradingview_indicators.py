@@ -58,6 +58,41 @@ class TradingViewIndicatorError(Exception):
     üretmek için kullanılan özel hata sınıfı."""
 
 
+def _ham_scanner_teshisi(tv_semboller, screener, interval, timeout):
+    """Toplu istek TÜM adaylar için None döndürdüğünde (0% başarı - canlı
+    testte tam olarak bu görüldü: 20/20 hisse "teknik veri alınamadı"),
+    bunun NEDENİNİ (ağ engeli/proxy, TradingView'in bot koruması, uç
+    noktanın şema değişikliği, geçersiz screener/exchange vb.) KÖR KÖRÜNE
+    tahmin etmek yerine DOĞRUDAN teşhis eder: TradingView'in scan uç
+    noktasına aynı isteği tekrar atıp HTTP durum kodunu ve yanıt
+    gövdesinin bir kısmını döner. Bu, "teknik veri alınamadı" mesajının
+    ARKASINDAKİ gerçek nedeni bir sonraki canlı testte hemen ortaya
+    çıkarır (Radar hata ayıklamasında kullanılan "zengin teşhis" ilkesiyle
+    aynı yaklaşım - bkz. integrations/fintables_browser.py).
+
+    SADECE teşhis amaçlıdır (ekstra, tek seferlik bir HTTP isteği);
+    herhangi bir hata bu fonksiyonun DIŞINA asla sızmaz - sonuç sadece
+    bir log/teşhis metnidir, akışı etkilemez.
+    """
+    try:
+        import requests
+
+        from tradingview_ta import TradingView
+
+        indicators_key = TradingView.indicators.copy() + EK_GOSTERGELER
+        data = TradingView.data(tv_semboller, interval, indicators_key)
+        scan_url = f"{TradingView.scan_url}{screener.lower()}/scan"
+        headers = {"User-Agent": "tradingview_ta_johnny_terminal_teshis"}
+        yanit = requests.post(scan_url, json=data, headers=headers, timeout=timeout)
+        govde_onizleme = yanit.text[:300].replace("\n", " ")
+        return (
+            f"Teşhis isteği sonucu -> HTTP {yanit.status_code}, URL: "
+            f"{scan_url}, yanıt önizlemesi: {govde_onizleme!r}"
+        )
+    except Exception as e:
+        return f"Teşhis isteği de başarısız oldu ({type(e).__name__}): {e}"
+
+
 def _ensure_tradingview_ta():
     """tradingview-ta kütüphanesi kurulu değilse anlaşılır bir hata
     fırlatır."""
@@ -245,5 +280,23 @@ def fetch_indicators_for_candidates(
             kayitlar.append(kayit)
             if i < toplam:
                 time.sleep(YEDEK_ISTEK_BEKLEME_SN)
+
+    # BUG TEŞHİSİ (canlı testte görüldü: 20/20 aday için "teknik veri
+    # alınamadı" - %0 başarı). Tek tek her hissenin TradingView'de
+    # bulunamamış olması istatistiksel olarak pek olası değildir (KOZAL,
+    # KOZAA gibi çok likit/bilinen hisseler dahil); bu yüzden %0 başarı
+    # durumunda KÖR KÖRÜNE tahmin etmek yerine DOĞRUDAN bir teşhis
+    # isteği atılıp HTTP durum kodu ve yanıt önizlemesi loglanır - bir
+    # sonraki canlı testte gerçek nedenin (ağ engeli/proxy, bot koruması,
+    # TradingView'in scan API şemasını değiştirmesi vb.) hemen ortaya
+    # çıkması için.
+    if kayitlar and all(k.get("rsi") is None for k in kayitlar):
+        teshis = _ham_scanner_teshisi(
+            tv_semboller, screener=screener, interval=interval, timeout=timeout
+        )
+        _bildir(
+            "UYARI: TradingView'den HİÇBİR aday için teknik veri "
+            f"alınamadı (0/{len(kayitlar)} başarı). {teshis}"
+        )
 
     return pd.DataFrame(kayitlar)
