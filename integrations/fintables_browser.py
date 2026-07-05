@@ -109,6 +109,7 @@ referans için modülde duruyor ama artık ÇAĞRILMIYOR.
 """
 
 import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -430,15 +431,59 @@ def _radar_hisse_kolon_indexi_bul(basliklar):
     """Radar tablosu başlıkları arasında hisse kodu kolonunun (örn.
     '640 Hisse') indeksini bulur; scoring/pre_screen.find_ticker_column
     ile AYNI mantığı kullanır (tek bir yerden yönetilsin diye - ön eleme
-    ile burada aynı kolon bulunmalı). Bulunamazsa 0 (ilk kolon) varsayılır
-    - Fintables Radar tablosunda hisse kodu her zaman ilk kolonda görünür
-    (integrations/explore_fintables_dom.py ile DOĞRULANDI)."""
+    ile burada aynı kolon bulunmalı).
+
+    BUG FIX: canlı testte Fintables Radar tablosunun thead'inde SADECE
+    2 <th> (`['#', '']`) olduğu, gerçek kolon etiketlerinin (Hisse,
+    Fiyat, Getiri dönemleri...) <th> olarak hiç yer ALMADIĞI görüldü -
+    yani başlıktan hisse kolonunu bulmak HER ZAMAN mümkün olmayabilir.
+    Bu yüzden artık bulunamazsa (eskiden olduğu gibi sessizce 0
+    varsaymak yerine) None döner - çağıran taraf (bkz.
+    `_radar_sayfasindan_df_olustur`) bunu, örnek satır DEĞERLERİNE
+    bakan bir yedek yöntemle (bkz. `_radar_hisse_kolon_indexi_deger_ile_bul`)
+    tamamlayabilsin diye. Sadece o da başarısız olursa 0'a (ilk kolon)
+    düşülür."""
     from scoring.pre_screen import find_ticker_column
 
     baslik = find_ticker_column(basliklar)
     if baslik is not None and baslik in basliklar:
         return basliklar.index(baslik)
-    return 0
+    return None
+
+
+_TICKER_BENZERI_DESEN = re.compile(r"^(?=.*[A-ZÇĞİÖŞÜ])[A-ZÇĞİÖŞÜ0-9]{2,6}$")
+
+
+def _ticker_gibi_mi(deger):
+    """Bir hücre değerinin BIST hisse kodu gibi görünüp görünmediğini
+    KABACA kontrol eder: 2-6 karakterli, tamamen büyük harf (Türkçe
+    karakterler dahil) ve/veya rakam içeren, en az bir harf barındıran,
+    noktalama/boşluk İÇERMEYEN bir metin (örn. 'VESTL', 'THYAO', ama
+    aynı zamanda 'A1CAP', 'A1YEN' gibi rakamlı gerçek BIST kodları da -
+    bkz. daha önceki canlı testte doğrulanan aday listesi). Kesin bir
+    doğrulama DEĞİLDİR - sadece başlık metninden hisse kodu kolonu
+    bulunamadığında hangi kolonun bu olma ihtimalinin yüksek olduğunu
+    tahmin etmek için kullanılır (bkz.
+    `_radar_hisse_kolon_indexi_deger_ile_bul`)."""
+    if not deger:
+        return False
+    return bool(_TICKER_BENZERI_DESEN.match(deger.strip()))
+
+
+def _radar_hisse_kolon_indexi_deger_ile_bul(ornek_satirlar):
+    """YEDEK yöntem: başlık metninden hisse kodu kolonu bulunamadığında,
+    birkaç örnek satırın (`ornek_satirlar`: list[list[str]]) hücrelerine
+    bakıp HEPSİNDE ticker-benzeri (bkz. `_ticker_gibi_mi`) bir değer olan
+    kolonu bulur. Birden fazla kolon uyarsa İLKİ (soldaki) tercih edilir.
+    Hiçbiri uymazsa (ya da örnek satır yoksa) None döner - hata
+    fırlatmaz, çağıran taraf 0'a (ilk kolon) düşer."""
+    if not ornek_satirlar:
+        return None
+    kolon_sayisi = min(len(s) for s in ornek_satirlar)
+    for kolon_i in range(kolon_sayisi):
+        if all(_ticker_gibi_mi(satir[kolon_i]) for satir in ornek_satirlar):
+            return kolon_i
+    return None
 
 
 def _radar_sayfasindan_df_olustur(
@@ -570,58 +615,106 @@ def _radar_sayfasindan_df_olustur(
     except Exception:
         pass
 
-    # BUG FIX: canlı testte ilk <tr>'nin SADECE 2 <th> içerdiği görüldü
-    # (örn. ['#', '']) - oysa gerçek veri satırları 13 hücre içeriyordu.
-    # Demek ki thead:first-of-type BİRDEN FAZLA <tr> içeriyor: üstte
-    # muhtemelen gruplama/özet başlığı (colspan ile birleşik, az sayıda
-    # <th>), altta gerçek kolonların tek tek etiketleri (veri satırı
-    # hücre sayısıyla eşleşen, daha fazla <th>). Bu yüzden thead
-    # içindeki TÜM <tr>'ler taranır ve EN ÇOK <th> içeren satır
-    # kullanılır - gerçek, granüler kolon etiketlerinin bu satırda
-    # olduğu varsayımıyla. Tek bir <tr> varsa davranış değişmez (o
-    # zaten kullanılır).
-    basliklar = []
+    # BUG FIX (kök neden - canlı testte doğrulandı): thead:first-of-type
+    # GERÇEKTEN sadece TEK bir <tr> içeriyor ve bu satır SADECE 2 <th>
+    # ("#", "") barındırıyor - Fintables'ın gerçek kolon etiketleri
+    # (Hisse, Fiyat, Gün %, Hacim, Getiri dönemleri...) hiç <th> olarak
+    # yer almıyor (muhtemelen ikinci <th> tüm bu kolonları colspan ile
+    # kapsıyor ama metni boş/simge-tabanlı). Bu yüzden artık başlık
+    # sayısının veri hücre sayısıyla eşleşmesi BEKLENMİYOR: önce DOM'daki
+    # örnek satırlardan GERÇEK veri kolon sayısı tespit edilir, başlıklar
+    # bu sayıya göre yeniden kurulur (eldeki gerçek <th> metinleri
+    # index'e göre kullanılır, eksik kalan kolonlar için "Kolon_N" gibi
+    # otomatik adlar üretilir - veri KAYBOLMAZ, sadece adsız kalır).
+    basliklar_ham = []
     _thead_satirlari = page.locator(f"{RADAR_TABLE_SELECTOR_VARSAYILAN} thead:first-of-type tr")
     for _i in range(_thead_satirlari.count()):
         _aday_basliklar = [b.strip() for b in _thead_satirlari.nth(_i).locator("th").all_inner_texts()]
-        if len(_aday_basliklar) > len(basliklar):
-            basliklar = _aday_basliklar
+        if len(_aday_basliklar) > len(basliklar_ham):
+            basliklar_ham = _aday_basliklar
 
-    if not basliklar:
+    if not basliklar_ham:
         raise FintablesError(
             "Tablo başlıkları (thead th) okunamadı. Fintables'ın sayfa "
             "yapısı değişmiş olabilir; integrations/explore_fintables_dom.py "
             "ile yeniden DOM taraması yapmanız gerekebilir."
         )
 
-    hisse_kolon_index = _radar_hisse_kolon_indexi_bul(basliklar)
-
-    # BUG FIX: tablo kabuğu ve hatta ilk <tr> elementleri DOM'da
-    # göründükten SONRA bile satırlar bir süre React'in yükleme
-    # iskeleti (skeleton/placeholder - başlık sayısıyla eşleşmeyen
-    # geçici satırlar) olabilir; gerçek veri biraz sonra gelir. Ana
-    # döngüye girmeden önce en az BİR satırın başlık sayısıyla
-    # eşleşmesini kısa aralıklarla bekleriz; zaman aşımına uğrarsa
-    # (tablo gerçekten farklı yapıdaysa) sessizce vazgeçilir - ana
-    # döngü zaten kendi deneme/scroll mantığıyla devam edecektir.
-    for _ in range(20):
+    # DOM'da o an bulunan birkaç örnek satırı al (gerçek veri kolon
+    # sayısını VE - başlıktan bulunamazsa - hisse kodu kolonunu tahmin
+    # etmek için). Tablo henüz tam yüklenmemişse (örn. React bir an için
+    # az sayıda hücreli bir yükleme iskeleti/skeleton gösteriyorsa) İLK
+    # okumaya körü körüne güvenilmez: örnekler BİRİKTİRİLİR (attempts
+    # arası sıfırlanmaz) ve en az 8 örnek toplanıp bunların en az %70'i
+    # AYNI hücre sayısına sahip olana kadar (güvenli çoğunluk) devam
+    # edilir. Böylece geçici, az hücreli bir iskelet ilk birkaç
+    # denemede görülse bile gerçek veri geldikçe çoğunluk ona kayar.
+    # Yine de hiç satır bulunamazsa basliklar_ham olduğu gibi kullanılır
+    # ve ana döngü kendi deneme/scroll mantığıyla devam eder.
+    _ornek_satirlar = []
+    for _deneme in range(15):
         try:
-            _on_kontrol = page.locator(
+            _satir_locator_on = page.locator(
                 f"{RADAR_TABLE_SELECTOR_VARSAYILAN} tbody:first-of-type tr"
             )
-            _eslesme_bulundu = False
-            for _i in range(_on_kontrol.count()):
-                if len(_on_kontrol.nth(_i).locator("td").all_inner_texts()) == len(basliklar):
-                    _eslesme_bulundu = True
-                    break
-            if _eslesme_bulundu:
-                break
+            for _i in range(min(_satir_locator_on.count(), 5)):
+                _hucreler_on = [h.strip() for h in _satir_locator_on.nth(_i).locator("td").all_inner_texts()]
+                if _hucreler_on:
+                    _ornek_satirlar.append(_hucreler_on)
         except Exception:
             pass
+
+        if len(_ornek_satirlar) >= 8:
+            _uzunluk_sayaci_on = Counter(len(s) for s in _ornek_satirlar)
+            _en_yaygin_uzunluk, _en_yaygin_adet = _uzunluk_sayaci_on.most_common(1)[0]
+            if _en_yaygin_adet / len(_ornek_satirlar) >= 0.7:
+                break
+
         try:
             page.wait_for_timeout(300)
         except Exception:
             pass
+
+    if _ornek_satirlar:
+        # En sık görülen hücre sayısını "gerçek" veri kolon sayısı kabul
+        # et (bazı satırlar skeleton/placeholder olup farklı sayıda
+        # hücre içerebilir; çoğunluk gerçek veriyi yansıtır).
+        _uzunluk_sayaci = Counter(len(s) for s in _ornek_satirlar)
+        veri_kolon_sayisi = _uzunluk_sayaci.most_common(1)[0][0]
+    else:
+        veri_kolon_sayisi = len(basliklar_ham)
+
+    if veri_kolon_sayisi == len(basliklar_ham):
+        basliklar = basliklar_ham
+    else:
+        _bildir(
+            f"Bilgi: thead'den okunan başlık sayısı ({len(basliklar_ham)}: "
+            f"{basliklar_ham}) gerçek veri kolon sayısıyla "
+            f"({veri_kolon_sayisi}) uyuşmuyor - eksik kolonlar için "
+            "otomatik ad üretiliyor, veri KAYBOLMUYOR."
+        )
+        basliklar = []
+        for _i in range(veri_kolon_sayisi):
+            if _i < len(basliklar_ham) and basliklar_ham[_i]:
+                basliklar.append(basliklar_ham[_i])
+            else:
+                basliklar.append(f"Kolon_{_i + 1}")
+
+    hisse_kolon_index = _radar_hisse_kolon_indexi_bul(basliklar)
+    if hisse_kolon_index is None and _ornek_satirlar:
+        hisse_kolon_index = _radar_hisse_kolon_indexi_deger_ile_bul(_ornek_satirlar)
+        if hisse_kolon_index is not None:
+            _bildir(
+                "Bilgi: hisse kodu kolonu başlıktan değil, örnek "
+                f"değerlerden tespit edildi (kolon {hisse_kolon_index + 1}: "
+                f"{basliklar[hisse_kolon_index]!r})."
+            )
+    if hisse_kolon_index is None:
+        hisse_kolon_index = 0
+        _bildir(
+            "UYARI: hisse kodu kolonu ne başlıktan ne örnek değerlerden "
+            "tespit edilebildi; ilk kolon (index 0) varsayılıyor."
+        )
 
     # Tüm satırları hisse koduna göre biriktiren sözlük. Virtual
     # scrolling nedeniyle DOM'daki satırlar tur tur DEĞİŞEBİLİR/
