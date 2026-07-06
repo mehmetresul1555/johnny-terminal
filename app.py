@@ -21,6 +21,7 @@ sys.path.append(str(BASE_DIR))
 
 import data_mapper  # noqa: E402
 from integrations import fintables_browser  # noqa: E402
+from scoring import market_journal, performance_tracker  # noqa: E402
 from scoring.johnny_score import (  # noqa: E402
     NO_OPPORTUNITY_MESSAGE,
     OPTIONAL_COLUMNS,
@@ -169,6 +170,12 @@ with st.sidebar:
                     )
                     st.session_state["fintables_df_ham"] = df_fintables
                     st.session_state["fintables_hata_listesi"] = hata_listesi
+                    # v1.2 (Market Journal): bu YENİ veri için bir snapshot/
+                    # journal/ledger kaydı yapılması gerektiğini işaretle -
+                    # aksi halde Streamlit'in her widget etkileşiminde
+                    # script'i baştan çalıştırması, aynı veri için tekrar
+                    # tekrar (yanlışlıkla) yeni snapshot kaydına yol açardı.
+                    st.session_state["fintables_yeni_veri_bekliyor"] = True
                     durum.write(
                         "Ham veri hazır. Johnny Score hesaplaması, aşağıdaki "
                         "Kolon Eşleştirme onaylandıktan sonra otomatik olarak "
@@ -288,6 +295,21 @@ except ValueError as e:
 if kaynak == "Fintables (Tarayıcı Otomasyonu)" and st.session_state.get("fintables_df_ham") is not None:
     st.success("✅ Johnny Score hesaplandı. Top 3 hazır.")
 
+# v1.2 (Market Journal - kullanıcı isteği): SADECE yeni bir Fintables
+# güncellemesi sonrası (fintables_yeni_veri_bekliyor bayrağı) bir
+# snapshot kaydedilir + Piyasa Günlüğü üretilir + performans defteri
+# güncellenir. Streamlit HER widget etkileşiminde bu script'i baştan
+# çalıştırdığı için, bu bayrak olmadan her sayfa yenilemesinde yanlışlıkla
+# tekrar tekrar snapshot kaydedilirdi.
+if kaynak == "Fintables (Tarayıcı Otomasyonu)" and st.session_state.get("fintables_yeni_veri_bekliyor"):
+    _snapshot_path, _ts = market_journal.save_snapshot(sonuc, BASE_DIR)
+    _gunluk_metni, _gunluk_veri = market_journal.generate_market_journal(BASE_DIR, sonuc, _ts)
+    performance_tracker.record_recommendations(sonuc, _ts, BASE_DIR)
+    performance_tracker.update_open_recommendations(BASE_DIR)
+    st.session_state["son_gunluk_metni"] = _gunluk_metni
+    st.session_state["son_snapshot_ts"] = _ts
+    st.session_state["fintables_yeni_veri_bekliyor"] = False
+
 # --- Trade edilebilir fırsatlar ---
 # v1.0 REVİZYON (kullanıcı isteği - "Johnny artık bir puanlama motoru
 # değil, bir TRADE ASİSTANI"): kullanıcıya ASLA "UZAK DUR" etiketli
@@ -311,11 +333,27 @@ else:
             st.write(f"**Stop:** {row['Stop']}")
             st.write(f"**Hedef 1:** {row['Hedef 1']}")
             st.write(f"**Hedef 2:** {row['Hedef 2']}")
+            st.write(
+                f"**Güven Skoru:** %{row['Güven Skoru (%)']:.0f} · "
+                f"**Risk/Getiri:** {row['Risk/Getiri Oranı']}"
+            )
+            st.caption(f"Kurallar: {row['Rule Bonusları']}")
             st.caption(row["Gerekçe"])
             with st.expander("🔍 Johnny neden bu puanı verdi?"):
                 st.markdown(row["Neden"])
 
 st.divider()
+
+# --- Piyasa Günlüğü (v1.2 Market Journal) ---
+# Bir önceki analiz snapshot'ıyla otomatik karşılaştırma: yeni giren/
+# çıkan hisseler, en çok kazanan/kaybeden, Top 3 değişimi, en istikrarlı/
+# en hızlı yükselen-zayıflayan adaylar. SADECE yeni bir Fintables
+# güncellemesi sonrası üretilir (bkz. yukarıdaki fintables_yeni_veri_
+# bekliyor bayrağı) - sayfa yenilemelerinde son üretilen metin gösterilir.
+if st.session_state.get("son_gunluk_metni"):
+    st.subheader("📓 Piyasa Günlüğü")
+    st.text(st.session_state["son_gunluk_metni"])
+    st.divider()
 
 # --- Tam tablo ---
 # NOT: bu tablo şeffaflık/araştırma amaçlıdır ve "UZAK DUR" adayları da
@@ -348,6 +386,48 @@ with col_b:
         file_name=f"johnny_terminal_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
     )
+
+# --- Geçmiş Analizler (v1.2 Market Journal) ---
+# Her analiz bir snapshot olarak history/snapshots/ altına kaydedilir;
+# burada geçmiş herhangi bir snapshot tekrar açılıp o anki öneriler
+# incelenebilir.
+st.divider()
+st.subheader("🗂️ Geçmiş Analizler")
+gecmis_dosyalar = market_journal.list_snapshot_files(BASE_DIR)
+if not gecmis_dosyalar:
+    st.caption("Henüz kaydedilmiş bir analiz snapshot'ı yok.")
+else:
+    etiketler = [market_journal.ts_from_path(f) for f in reversed(gecmis_dosyalar)]
+    secilen_ts = st.selectbox("Bir analiz tarihi/saati seçin", etiketler, key="gecmis_secim")
+    if secilen_ts:
+        secilen_yol = next(f for f in gecmis_dosyalar if market_journal.ts_from_path(f) == secilen_ts)
+        gecmis_df = market_journal.load_snapshot(secilen_yol)
+        gecmis_kolonlari = [c for c in tablo_kolonlari if c in gecmis_df.columns]
+        st.dataframe(style_table(gecmis_df[gecmis_kolonlari]), use_container_width=True, hide_index=True)
+        journal_eslesen = [f for f in market_journal.list_journal_files(BASE_DIR) if market_journal.ts_from_path(f) == secilen_ts]
+        if journal_eslesen:
+            with st.expander(f"📓 {secilen_ts} Piyasa Günlüğü"):
+                st.text(journal_eslesen[0].read_text(encoding="utf-8"))
+
+# --- Performans Raporu (v1.2 Market Journal) ---
+# Johnny'nin kendi geçmiş AL/İZLE önerilerinin GERÇEK sonucunu (+1/+3/
+# +5/+10 iş günü checkpoint'leri) ölçtüğü rapor. Ledger'da hiç
+# değerlendirilmiş öneri yoksa (henüz yeterli zaman geçmediyse) bu net
+# şekilde belirtilir - sistem asla uydurma bir sayı göstermez.
+st.divider()
+st.subheader("📊 Performans Raporu")
+st.caption(
+    "Johnny'nin geçmiş önerilerinin gerçek piyasa sonucu - kendi tarama "
+    "örneklerinden (günde birkaç kez) hesaplanır, gerçek sürekli intraday "
+    "veri değildir (bkz. rapor altındaki not)."
+)
+checkpoint_secimi = st.selectbox(
+    "Referans checkpoint (kaç iş günü sonrasına bakılsın?)",
+    performance_tracker.CHECKPOINT_GUNLERI, index=2, key="checkpoint_secimi",
+)
+if st.button("📊 Performans Raporunu Oluştur"):
+    rapor = performance_tracker.generate_performance_report(BASE_DIR, checkpoint_gun=checkpoint_secimi)
+    st.text(rapor["metin"])
 
 st.caption(
     "⚠️ Bu araç yatırım tavsiyesi değildir ve otomatik emir göndermez. "

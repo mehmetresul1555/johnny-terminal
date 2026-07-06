@@ -32,6 +32,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 import data_mapper  # noqa: E402
 from integrations import fintables_browser  # noqa: E402
+from scoring import market_journal, performance_tracker  # noqa: E402
 from scoring.johnny_score import (  # noqa: E402
     NO_OPPORTUNITY_MESSAGE,
     OPTIONAL_COLUMNS,
@@ -107,6 +108,30 @@ def main():
 
     log("Johnny Score hesaplandı.")
 
+    # v1.2 (Market Journal - kullanıcı isteği): her çalıştırma bir
+    # SNAPSHOT olarak kalıcı diske kaydedilir (history/snapshots/), bu
+    # snapshot bir önceki analizle otomatik karşılaştırılır ("Piyasa
+    # Günlüğü" üretilir), ve o an önerilen AL/İZLE hisseler bir performans
+    # takip defterine ("ledger") eklenir. Ayrıca vadesi gelmiş (+1/+3/+5/
+    # +10 iş günü) önceki önerilerin checkpoint sonuçları güncellenir.
+    # Bu adımlar MEVCUT tarama/puanlama/öneri mekanizmasını DEĞİŞTİRMEZ -
+    # sadece score_dataframe() çıktısını saklar/karşılaştırır.
+    snapshot_path, ts = market_journal.save_snapshot(sonuc, BASE_DIR)
+    log(f"Snapshot kaydedildi: {snapshot_path.name}")
+
+    gunluk_metni, _gunluk_veri = market_journal.generate_market_journal(BASE_DIR, sonuc, ts)
+    print("\n" + "=" * 60)
+    print("PİYASA GÜNLÜĞÜ")
+    print("=" * 60)
+    print(gunluk_metni)
+
+    eklenen_oneri = performance_tracker.record_recommendations(sonuc, ts, BASE_DIR)
+    guncellenen_checkpoint = performance_tracker.update_open_recommendations(BASE_DIR)
+    log(
+        f"Performans takibi: {eklenen_oneri} yeni öneri kaydedildi, "
+        f"{guncellenen_checkpoint} checkpoint güncellendi."
+    )
+
     # v1.0 REVİZYON (kullanıcı isteği - "Johnny artık bir puanlama motoru
     # değil, bir TRADE ASİSTANI"): kullanıcıya ASLA "UZAK DUR" etiketli
     # hisseler Top 3 olarak gösterilmez - sonuc.head(3) yerine sadece
@@ -128,6 +153,11 @@ def main():
                 f"Stop: {row['Stop']}  Hedef 1: {row['Hedef 1']}  Hedef 2: {row['Hedef 2']}"
             )
             print(f"  Gerekçe: {row['Gerekçe']}")
+            print(
+                f"  Güven Skoru: %{row['Güven Skoru (%)']:.0f}  "
+                f"Risk/Getiri: {row['Risk/Getiri Oranı']}  "
+                f"Rule Bonusları: {row['Rule Bonusları']}"
+            )
 
     log("Fırsat taraması tamamlandı.")
 

@@ -386,6 +386,62 @@ alma" gibi bir sonuç gösterilmez:
 Bu davranış `scoring/johnny_score.py` içinde merkezi olarak
 uygulanır; hem `app.py` hem `test_full_flow.py` aynı fonksiyonu kullanır.
 
+## Market Journal (v1.2) - Johnny kendi performansını ölçer
+
+**Kullanıcı isteği:** Johnny sadece hisse seçen bir yazılım değil, kendi
+geçmiş kararlarının GERÇEK sonucunu ölçen, zaman içinde daha kaliteli
+öneriler sunmayı hedefleyen bir trade asistanı olmalı. Bu, MEVCUT
+tarama/puanlama/öneri mekanizmasını DEĞİŞTİRMEDEN, üstüne eklenen ayrı
+bir katmandır (`scoring/market_journal.py`, `scoring/performance_tracker.py`).
+
+**Yapılandırılmış metrikler** (`score_dataframe` çıktısına eklendi):
+her hisse için Teknik/Momentum/Temel puan, Rule Bonusları (hangi
+kurallar tetiklendi), **Güven Skoru (%)** (veri ne kadar eksikse o kadar
+düşer - eksik teknik gösterge/fundamental alan/hacim oranı başına ceza
+uygulanır) ve **Risk/Getiri Oranı** (Hedef 1 mesafesi / Stop mesafesi)
+artık ayrı kolonlar olarak mevcut.
+
+**Snapshot + Piyasa Günlüğü:** her çalıştırma (`test_full_flow.py` ya da
+`app.py` → "Fintables'tan Güncelle"), tam sonucu `history/snapshots/
+YYYY-MM-DD_HHMM.csv` olarak kaydeder ve bir önceki snapshot'la otomatik
+karşılaştırıp `history/journal/YYYY-MM-DD_HHMM.md` altına bir "Piyasa
+Günlüğü" yazar: yeni giren/listeden çıkan hisseler, en fazla puan
+kazanan/kaybedenler, Top 3 değişimi (sıralama değişti mi, kim çıktı, kim
+yeni girdi), en istikrarlı hisse (son birkaç taramada en düşük skor
+sapması) ve en hızlı yükselen/zayıflayan aday (skor eğimi). `app.py`'da
+bu bölüm "📓 Piyasa Günlüğü" başlığı altında, `test_full_flow.py`'da
+"PİYASA GÜNLÜĞÜ" bölümünde gösterilir. Geçmiş herhangi bir snapshot,
+`app.py`'daki "🗂️ Geçmiş Analizler" bölümünden tekrar açılabilir.
+
+**Performans takibi (ledger):** her AL/İZLE önerisi `history/ledger/
+ledger.csv` altına bir kayıt olarak eklenir (giriş fiyatı, stop, hedef1/
+2, hangi kurallar tetiklendi). Her çalıştırmada vadesi gelmiş (+1/+3/+5/
++10 **iş günü** - resmi tatiller hesaba katılmaz) öneriler otomatik
+değerlendirilir: kapanış fiyatı, en yüksek/en düşük görülen fiyat, stop
+çalıştı mı, Hedef 1/2'ye ulaşıldı mı, maksimum getiri/geri çekilme ve
+elde tutma süresi hesaplanır - kronolojik sırayla ilk ÖNCE hangisi
+tetiklendiyse (stop mu hedef1 mi) ona göre "başarılı/başarısız" kararı
+verilir.
+
+> **Önemli veri kaynağı sınırlaması:** Johnny'nin sürekli bir fiyat akışı
+> (tick verisi) yoktur - sadece kendi taramalarını çalıştırdığında (günde
+> birkaç kez, hafta içi) bir fiyat örneği alır. "En yüksek/en düşük
+> görülen fiyat" bu yüzden GERÇEK intraday en yüksek/en düşük değil,
+> Johnny'nin kendi örneklerinin en yüksek/en düşüğüdür - bir
+> yaklaşıklıktır, tarama sıklığı arttıkça gerçeğe yaklaşır.
+
+**Aylık/yıllık performans raporu** (`app.py` → "📊 Performans Raporu" ya
+da `scoring.performance_tracker.generate_performance_report`): toplam
+öneri sayısı, AL/İZLE başarı oranı, ortalama kazanç/kayıp, Hedef 1/2
+başarı oranı, ortalama elde tutma süresi ve **kural (R1-R4) bazlı
+başarı oranı** (bir kural tetiklendiğinde genelde ne oluyor?) - hangi
+checkpoint'in (+1/+3/+5/+10 gün) referans alınacağı seçilebilir
+(varsayılan +5 gün). Henüz hiçbir öneri o checkpoint'e ulaşmadıysa rapor
+bunu açıkça belirtir, asla uydurma bir sayı göstermez.
+
+`history/` klasörü (snapshot/journal/ledger) `.gitignore`'dadır - bu
+kullanıcının çalışma zamanı verisidir, kaynak kod değildir.
+
 ## Kolon Eşleştirme (Fintables ve diğer kaynaklar için)
 
 Fintables Pro'dan (veya başka bir kaynaktan) indirdiğiniz/kopyaladığınız
@@ -431,9 +487,15 @@ johnny-terminal/
 │   ├── momentum_engine.py        # Momentum skor motoru (20 puan)
 │   ├── fundamental_engine.py     # Bilanço/temel skor motoru (20 puan)
 │   ├── rule_engine.py            # IF/THEN kural motoru (confluence bonusları)
-│   └── pre_screen.py             # v1.0: Radar verisiyle ilk N adayı seçen ön eleme mantığı
+│   ├── pre_screen.py             # v1.0: Radar verisiyle ilk N adayı seçen ön eleme mantığı
+│   ├── market_journal.py         # v1.2: snapshot kaydı + önceki analizle karşılaştırma + Piyasa Günlüğü
+│   └── performance_tracker.py    # v1.2: öneri takip defteri (ledger) + checkpoint değerlendirme + performans raporu
 ├── config/
 │   └── watchlist.yaml            # Watchlist, eşikler, risk, skorlama ve Fintables parametreleri
+├── history/                       # v1.2: snapshot/journal/ledger (git'e girmez, .gitignore'da)
+│   ├── snapshots/                # Her analizin tam çıktısı (YYYY-MM-DD_HHMM.csv)
+│   ├── journal/                  # Her analize ait Piyasa Günlüğü (YYYY-MM-DD_HHMM.md)
+│   └── ledger/                   # Öneri takip defteri (ledger.csv)
 ├── outputs/                      # Dışa aktarılan sonuç CSV'leri (git'e girmez)
 └── requirements.txt
 ```

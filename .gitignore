@@ -6,3 +6,9 @@ outputs/*.csv
 
 # Fintables oturum bilgisi (cerezler/localStorage) - ASLA commit'lenmez
 integrations/.sessions/
+
+# v1.2 Market Journal: her calistirmada biriken snapshot/journal/ledger
+# verisi - bu KULLANICIYA ait calisma zamani verisidir, kaynak kod
+# degildir; gunde birkac kez buyudugu icin repo'yu sisirmemesi icin
+# commit'lenmez (bkz. README "Market Journal" bolumu).
+history/

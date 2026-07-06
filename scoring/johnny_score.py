@@ -500,6 +500,62 @@ def generate_reason_bullets(score_result):
     return bullets
 
 
+# v1.2 (Market Journal - kullanıcı isteği): her öneri için Güven Skoru ve
+# Risk/Getiri oranı gibi YAPILANDIRILMIŞ (ayrı kolon) metrikler de
+# üretilir - eskiden bunlar sadece serbest metin ("Gerekçe"/"Neden")
+# içinde gömülüydü, snapshot/geçmiş karşılaştırma/performans takibi için
+# ayrı kolonlara ihtiyaç var.
+
+# Güven Skoru cezaları: her eksik teknik gösterge / fundamental alan /
+# hacim oranı eksikliği güveni düşürür. Bir hissenin TradingView'de HİÇ
+# bulunamayıp "düşük güven" ile dolgu yapıldığı durumlarda zaten TÜM
+# teknik göstergeler eksik olacağı için (bkz. run_full_update - böyle bir
+# hissenin rsi/macd/ema/adx/atr alanları gerçekten None kalır), bu ceza
+# sistemi o durumu da otomatik olarak yakalar; ayrı bir "_dusuk_guven"
+# bayrağına ihtiyaç yoktur (zaten data_mapper.apply_mapping standart
+# olmayan kolonları elediği için bu bayrak score_dataframe'e ulaşmaz).
+_GUVEN_CEZA_TEKNIK_GOSTERGE = 4
+_GUVEN_CEZA_FUNDAMENTAL_ALAN = 5
+_GUVEN_CEZA_HACIM_ORANI = 8
+
+
+def _compute_guven_skoru(score_result):
+    """0-100 arası bir 'Güven Skoru' hesaplar: veri ne kadar eksikse
+    güven o kadar düşer. Johnny'nin puanı yüksek olsa bile, o puan çok
+    eksik veriyle (nötr varsayımlarla) üretildiyse güven düşük olmalı -
+    bu, kullanıcının önerinin ne kadar 'sağlam' veriye dayandığını
+    anlamasını sağlar (bkz. README 'Market Journal' bölümü)."""
+    ceza = (
+        _GUVEN_CEZA_TEKNIK_GOSTERGE * len(score_result.get("eksik_teknik_gostergeler", []))
+        + _GUVEN_CEZA_FUNDAMENTAL_ALAN * len(score_result.get("eksik_fundamental_alanlar", []))
+        + (_GUVEN_CEZA_HACIM_ORANI if score_result.get("hacim_orani_eksik") else 0)
+    )
+    return round(_clip(100 - ceza, 100), 1)
+
+
+def _compute_risk_getiri_orani(lvl):
+    """Risk/Getiri oranı = Hedef 1 mesafesi / Stop mesafesi (yüzde
+    olarak) - Hedef 1 kullanılır çünkü Hedef 2'ye göre daha yakın/daha
+    olası bir hedeftir, bu yüzden daha 'gerçekçi' bir risk/getiri
+    tahminidir. stop_pct sıfır/negatif olamaz (bkz. compute_trade_levels
+    - min 0.8 ile clip'lenir) ama yine de güvenlik için kontrol edilir."""
+    stop_pct = lvl.get("stop_pct", 0)
+    hedef1_pct = lvl.get("hedef1_pct", 0)
+    if not stop_pct or stop_pct <= 0:
+        return None
+    return round(hedef1_pct / stop_pct, 2)
+
+
+def _format_rule_bonuslari(fired_rules):
+    """Rule Engine'den tetiklenen kuralları kısa, tek satırlık okunabilir
+    bir metne çevirir (örn. 'R1 (+10), R2 (+8)'); hiçbiri tetiklenmediyse
+    'Yok' döner. Snapshot/CSV'de kolon olarak saklanabilsin diye
+    'Neden' metninden ayrı, kompakt bir alan olarak tutulur."""
+    if not fired_rules:
+        return "Yok"
+    return ", ".join(f"{r['id']} (+{r['puan']:.0f})" for r in fired_rules)
+
+
 def score_dataframe(df, config):
     """Ham veriden (CSV/Excel/ileride Fintables) Johnny Terminal çıktı
     tablosunu üretir.
@@ -540,12 +596,16 @@ def score_dataframe(df, config):
             stop_txt = "-"
             hedef1_txt = "-"
             hedef2_txt = "-"
+            risk_getiri_orani = None
+            stop_fiyat = hedef1_fiyat = hedef2_fiyat = None
         else:
             lvl = compute_trade_levels(row["fiyat"], atr_pct, risk_cfg)
             alim_araligi = f"{lvl['giris_alt']:.2f} - {lvl['giris_ust']:.2f}"
             stop_txt = f"{lvl['stop']:.2f} (-%{lvl['stop_pct']:.1f})"
             hedef1_txt = f"{lvl['hedef1']:.2f} (+%{lvl['hedef1_pct']:.1f})"
             hedef2_txt = f"{lvl['hedef2']:.2f} (+%{lvl['hedef2_pct']:.1f})"
+            risk_getiri_orani = _compute_risk_getiri_orani(lvl)
+            stop_fiyat, hedef1_fiyat, hedef2_fiyat = lvl["stop"], lvl["hedef1"], lvl["hedef2"]
 
         rows.append({
             "Hisse": row["hisse"],
@@ -558,6 +618,17 @@ def score_dataframe(df, config):
             "Hedef 2": hedef2_txt,
             "Gerekçe": gerekce,
             "Neden": neden_metin,
+            # v1.2 (Market Journal) - yapılandırılmış metrikler:
+            "Teknik Puan": clipped["teknik_skor"],
+            "Momentum Puanı": clipped["momentum_skor"],
+            "Temel Puan": clipped["bilanco_skor"],
+            "Rule Bonusları": _format_rule_bonuslari(score_result["fired_rules"]),
+            "Rule Bonus Toplam": score_result["rule_bonus"],
+            "Güven Skoru (%)": _compute_guven_skoru(score_result),
+            "Risk/Getiri Oranı": risk_getiri_orani,
+            "Stop Fiyat": stop_fiyat,
+            "Hedef 1 Fiyat": hedef1_fiyat,
+            "Hedef 2 Fiyat": hedef2_fiyat,
         })
 
     result = pd.DataFrame(rows)
