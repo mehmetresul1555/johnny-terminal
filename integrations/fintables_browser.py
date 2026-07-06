@@ -2177,6 +2177,24 @@ def run_full_update(config, on_progress=None):
         f"{', '.join(havuz_kodlari)}"
     )
 
+    # BUG FIX (canlı testte bulundu - kaba filtre TÜM hisseleri elediğinde
+    # havuz boş kalıyor, bu da aşağıda fundamental_df["hisse"] erişiminde
+    # KeyError ile ÇÖKMEYE yol açıyordu çünkü boş bir kayıt listesinden
+    # oluşturulan DataFrame hiç kolon içermiyor). kaba_filtrele artık
+    # kendi içinde "her şeyi eleme" durumuna karşı korumalı (bkz.
+    # scoring/pre_screen.py), ama havuz yine de boş kalırsa (örn.
+    # pre_screen_candidates'a giren veri tamamen boşsa) burada NET bir
+    # hata ile durulur - sessizce ilerleyip aşağıda anlaşılmaz bir
+    # KeyError'la çökmek yerine.
+    if not havuz_kodlari:
+        raise FintablesError(
+            "Kalite havuzu boş kaldı - hiçbir hisse ön elemeden geçemedi. "
+            "Bu genelde Radar'ın Fiyat/Hacim verisinin bu turda beklenmeyen "
+            "bir formatta gelmesinden ya da piyasa henüz açılmamış "
+            "olmasından kaynaklanabilir. Yukarıdaki 'Kaba filtre' "
+            "loglarındaki örnek ham değerlere bakıp tekrar deneyin."
+        )
+
     # 4) Fundamental veri (Piyasa Çarpanları + Rasyo Analiz Tablosu) -
     # ÖNCE fundamental çekiliyor (TradingView'DEN ÖNCE) ki zayıf/çok
     # eksik fundamental'i olan adaylar için boşuna TradingView isteği

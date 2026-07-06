@@ -233,22 +233,53 @@ def kaba_filtrele(df_radar, hisse_kolonu=None, min_hacim_percentile=0.20, on_pro
         )
         return df.reset_index(drop=True)
 
+    # BUG FIX (canlı testte bulundu - 640 hisseden 640'ı elendi, 0 kaldı,
+    # akış aşağıda çökmüştü): Fintables Radar'ın Fiyat/Hacim hücreleri
+    # BEKLENMEDİK bir formatta gelirse (örn. site formatı değişti, çok
+    # erken piyasa açılışında hacim geçici olarak tuhaf görünüyor, ya da
+    # DOM'dan okuma sırasında bir bozulma oldu) _sayiya_cevir TÜM
+    # satırlar için None/0 dönebilir - bu durumda filtre "kaba filtre"
+    # olmaktan çıkıp "her şeyi eleyen bir filtre" haline geliyordu. Artık
+    # bir filtre adımı TÜM satırları elerse (0 kalırsa) o adım GÜVENLİ
+    # ŞEKİLDE ATLANIR (filtre uygulanmadan önceki hale geri dönülür) ve
+    # açıkça bir UYARI loglanır - kaba filtrenin amacı "aşırı uçları
+    # temizlemek", yanlışlıkla "her şeyi silmek" değildir.
     if fiyat_kolonu is not None and fiyat_kolonu in df.columns:
         fiyat_sayisal = df[fiyat_kolonu].map(_sayiya_cevir)
         oncesi = len(df)
-        df = df[(fiyat_sayisal.notna() & (fiyat_sayisal > 0)).values]
-        elenen = oncesi - len(df)
-        if elenen:
-            _bildir(f"Kaba filtre: {elenen} hisse fiyat verisi eksik/anlamsız olduğu için elendi.")
+        df_fiyat_filtreli = df[(fiyat_sayisal.notna() & (fiyat_sayisal > 0)).values]
+        if df_fiyat_filtreli.empty and oncesi > 0:
+            ornekler = df[fiyat_kolonu].astype(str).head(3).tolist()
+            _bildir(
+                f"UYARI: fiyat filtresi TÜM {oncesi} hisseyi eleyecekti - bu "
+                "beklenmeyen bir durum (Radar formatı değişmiş olabilir), "
+                f"filtre bu turda ATLANIYOR. Örnek ham fiyat değerleri: {ornekler}"
+            )
+        else:
+            df = df_fiyat_filtreli
+            elenen = oncesi - len(df)
+            if elenen:
+                _bildir(f"Kaba filtre: {elenen} hisse fiyat verisi eksik/anlamsız olduğu için elendi.")
 
     if hacim_kolonu is not None and hacim_kolonu in df.columns:
         hacim_sayisal = df[hacim_kolonu].map(_sayiya_cevir)
         oncesi = len(df)
         gecerli_maske = (hacim_sayisal.notna() & (hacim_sayisal > 0)).values
-        df = df[gecerli_maske]
-        elenen = oncesi - len(df)
-        if elenen:
-            _bildir(f"Kaba filtre: {elenen} hisse hacim verisi eksik/sıfır olduğu için elendi.")
+        df_hacim_filtreli = df[gecerli_maske]
+        if df_hacim_filtreli.empty and oncesi > 0:
+            ornekler = df[hacim_kolonu].astype(str).head(3).tolist()
+            _bildir(
+                f"UYARI: hacim filtresi TÜM {oncesi} hisseyi eleyecekti - bu "
+                "beklenmeyen bir durum (Radar formatı değişmiş, piyasa henüz "
+                "açılmamış ya da hacim verisi geçici olarak okunamıyor "
+                f"olabilir), filtre bu turda ATLANIYOR. Örnek ham hacim "
+                f"değerleri: {ornekler}"
+            )
+        else:
+            df = df_hacim_filtreli
+            elenen = oncesi - len(df)
+            if elenen:
+                _bildir(f"Kaba filtre: {elenen} hisse hacim verisi eksik/sıfır olduğu için elendi.")
 
         if min_hacim_percentile and 0 < min_hacim_percentile < 1 and len(df) > 0:
             hacim_sayisal_guncel = df[hacim_kolonu].map(_sayiya_cevir)
