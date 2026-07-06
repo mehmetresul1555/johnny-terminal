@@ -282,16 +282,38 @@ def kaba_filtrele(df_radar, hisse_kolonu=None, min_hacim_percentile=0.20, on_pro
                 _bildir(f"Kaba filtre: {elenen} hisse hacim verisi eksik/sıfır olduğu için elendi.")
 
         if min_hacim_percentile and 0 < min_hacim_percentile < 1 and len(df) > 0:
+            # BUG FIX (canlı testte bulundu - yukarıdaki "hepsini eleme"
+            # korumasından SONRA bile bu adım hâlâ TÜM satırları
+            # eleyebiliyordu): hacim değerlerinin TAMAMI parse edilemezse
+            # (hepsi NaN), quantile() de NaN döner ve `>= NaN`
+            # karşılaştırması HER ZAMAN False sonuçlanır - yani bu adım
+            # da "kaba filtre" değil "her şeyi silen bir filtre" haline
+            # geliyordu. Aynı "tüm satırları eleyecekse atla" korumasını
+            # burada da uygula.
             hacim_sayisal_guncel = df[hacim_kolonu].map(_sayiya_cevir)
-            esik_deger = hacim_sayisal_guncel.quantile(min_hacim_percentile)
-            oncesi = len(df)
-            df = df[(hacim_sayisal_guncel >= esik_deger).values]
-            elenen = oncesi - len(df)
-            if elenen:
+            if hacim_sayisal_guncel.notna().sum() == 0:
                 _bildir(
-                    f"Kaba filtre: en düşük hacimli %{int(min_hacim_percentile * 100)} "
-                    f"({elenen} hisse) elendi."
+                    "UYARI: hacim yüzdelik dilim filtresi atlandı - hacim "
+                    "değerlerinin hiçbiri sayıya çevrilemedi (hepsi eksik/"
+                    "boş görünüyor)."
                 )
+            else:
+                esik_deger = hacim_sayisal_guncel.quantile(min_hacim_percentile)
+                oncesi = len(df)
+                df_percentile_filtreli = df[(hacim_sayisal_guncel >= esik_deger).values]
+                if df_percentile_filtreli.empty and oncesi > 0:
+                    _bildir(
+                        f"UYARI: hacim yüzdelik dilim filtresi TÜM {oncesi} "
+                        "hisseyi eleyecekti, bu turda ATLANIYOR."
+                    )
+                else:
+                    df = df_percentile_filtreli
+                    elenen = oncesi - len(df)
+                    if elenen:
+                        _bildir(
+                            f"Kaba filtre: en düşük hacimli %{int(min_hacim_percentile * 100)} "
+                            f"({elenen} hisse) elendi."
+                        )
 
     toplam_elenen = baslangic_sayisi - len(df)
     if toplam_elenen:
